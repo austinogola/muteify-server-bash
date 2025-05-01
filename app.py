@@ -7,7 +7,9 @@ from werkzeug.utils import secure_filename
 import time
 from dotenv import load_dotenv
 from flask_cors import CORS
-
+from flask_pymongo import PyMongo
+from flask_bcrypt import Bcrypt
+import jwt
 
 app = Flask(__name__)
 CORS(app)
@@ -32,6 +34,21 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_PUBLIC_KEY = os.getenv("SUPABASE_PUBLIC_KEY")
 BUCKET_NAME = "mutify-vocals-audios"
 
+
+app.config["MONGO_URI"] = os.getenv("MONGO_DB_URL")
+mongo = PyMongo(app)
+bcrypt = Bcrypt(app)
+SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key")
+
+AUDIO_FOLDER = 'youtube-mp3-downloads'
+VOCALS_FOLDER = 'audio-vocals'
+
+
+PLAN_LIMITS = {
+    "Trial": 10,   # 10 minutes/day
+    "Basic": 30,   # 30 minutes/day
+    "Pro": 9999    # (unlimited for now)
+}
 
 
 def download_mp3_from_youtube(url,max_retries=3):
