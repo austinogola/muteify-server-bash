@@ -1,2 +1,5 @@
 pretrained_models/
 separated/
+__pychache__/
+.env
+__pycache__/

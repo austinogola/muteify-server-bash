@@ -1,11 +1,17 @@
 from flask import Flask, request, jsonify, send_file
 import os
+import requests
 import shutil
 from spleeter.separator import Separator
 from werkzeug.utils import secure_filename
 import time
+from dotenv import load_dotenv
+from flask_cors import CORS
+
 
 app = Flask(__name__)
+CORS(app)
+load_dotenv()
 
 separator = Separator('spleeter:2stems','multiprocess:True')
 print("SEPARATOR",separator)
@@ -14,6 +20,99 @@ OUTPUT_FOLDER = 'separated'
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+
+
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
+DOWNLOAD_RAPIDAPI_HOST=os.getenv("DOWNLOAD_RAPIDAPI_HOST")
+MP3_DOWNLOADER_HOST=os.getenv("MP3_DOWNLOADER_HOST")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_PUBLIC_KEY = os.getenv("SUPABASE_PUBLIC_KEY")
+BUCKET_NAME = "mutify-vocals-audios"
+
+
+
+def download_mp3_from_youtube(url,max_retries=3):
+    # API endpoint to get the download link
+    api_url = f'https://{MP3_DOWNLOADER_HOST}/dl?id={url}'
+    print(api_url)
+    headers = {
+        'x-rapidapi-key': RAPIDAPI_KEY,  # Replace with your RapidAPI key
+        'x-rapidapi-host':MP3_DOWNLOADER_HOST,  # Replace with your RapidAPI host
+    }
+    start_time = time.time()
+
+    attempt = 0
+    result = None
+   
+    response = ''
+    result = ''
+
+    while attempt < max_retries:
+        try:
+            print(f'ATTEMPT {attempt}')
+            response = requests.get(api_url, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+
+            download_link = result.get('link')
+            if download_link:  # Valid link received
+                break
+            else:
+                print(f"Attempt {attempt + 1}: No valid link returned, retrying...")
+        except requests.exceptions.RequestException as e:
+            print(f"Attempt {attempt + 1} failed with error: {e}")
+        attempt += 1
+
+    if not result or not result.get('link'):
+        print("Failed to get a valid MP3 link after retries.")
+        return None, None
+
+    try:
+        # Make the request to get the MP3 link
+        #response = requests.get(api_url, headers=headers)
+        #response.raise_for_status()  # Check for errors in the response
+        #result = response.json()  # Parse JSON response
+        print(result)
+        # Extract download link
+        download_link = result.get('link')
+        
+
+        #file_name = result.get('title', 'downloaded_song') + '.mp3'
+        file_name =f"{url}.mp3"
+        file_path = os.path.join(DOWNLOAD_DIR, file_name)
+
+        # Send a request to download the MP3 file
+        mp3_response = requests.get(download_link, stream=True)
+        mp3_response.raise_for_status()  # Ensure the download was successful
+
+
+        # Determine the file path and write the content to a file
+        #file_name = result.get('title', 'downloaded_song') + '.mp3'
+        with open(file_path, 'wb') as file:
+            for chunk in mp3_response.iter_content(chunk_size=8192):
+                if chunk:
+                    file.write(chunk)
+        
+        # Calculate the time it took to download
+        download_time = time.time() - start_time
+        
+        # Return the file path and download time
+        #return file_name, download_time
+        return ({
+            'file_path': file_path,
+            'download_time_seconds': download_time
+        })
+    
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return None, None
+    
+
+
+
 
 @app.route('/separate', methods=['POST'])
 def separate():
