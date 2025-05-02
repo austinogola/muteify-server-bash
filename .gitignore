@@ -4,3 +4,8 @@ __pychache__/
 .env
 __pycache__/
 Miniconda3-latest-Linux-x86_64.sh
+
+
+downloads/
+outputs/
+uploads/

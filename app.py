@@ -34,7 +34,7 @@ RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
 DOWNLOAD_RAPIDAPI_HOST=os.getenv("DOWNLOAD_RAPIDAPI_HOST")
 MP3_DOWNLOADER_HOST=os.getenv("MP3_DOWNLOADER_HOST")
-
+NEW_DOWN = os.getenv("NEW_DOWN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_PUBLIC_KEY = os.getenv("SUPABASE_PUBLIC_KEY")
 BUCKET_NAME = "mutify-vocals-audios"
@@ -63,6 +63,93 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def download_mp3_from_youtube(url,max_retries=3):
+    # API endpoint to get the download link
+    #api_url = f'https://{MP3_DOWNLOADER_HOST}/dl?id={url}'
+    api_url = f'https://{NEW_DOWN}/api/converttomp3'
+    print(api_url)
+    headers = {
+          'Content-Type': "application/json",
+        'x-rapidapi-key': RAPIDAPI_KEY,  # Replace with your RapidAPI key
+        'x-rapidapi-host':NEW_DOWN,  # Replace with your RapidAPI host
+    }
+    payload = {"url":f"https://www.youtube.com/watch?v={url}"}
+    start_time = time.time()
+    print(payload)
+    attempt = 0
+    result = None
+
+    response = ''
+    result = ''
+
+    while attempt < max_retries:
+        try:
+            print(f'ATTEMPT {attempt}')
+            response = requests.post(api_url, headers=headers,json=payload)
+            #response.raise_for_status()
+            result = response.json()
+            print(result)
+            download_link = result.get('url')
+            response.raise_for_status()
+            if download_link:  # Valid link received
+                break
+            else:
+                print(f"Attempt {attempt + 1}: No valid link returned, retrying...")
+        except requests.exceptions.RequestException as e:
+            print(f"Attempt {attempt + 1} failed with error: {e}")
+        attempt += 1
+
+    if not result or not result.get('url'):
+        print("Failed to get a valid MP3 link after retries.")
+        return None, None
+
+
+    try:
+        # Make the request to get the MP3 link
+        #response = requests.get(api_url, headers=headers)
+        #response.raise_for_status()  # Check for errors in the response
+        #result = response.json()  # Parse JSON response
+        #print(result)
+        # Extract download link
+        download_link = result.get('url')
+
+
+        #file_name = result.get('title', 'downloaded_song') + '.mp3'
+        file_name =f"{url}.mp3"
+        file_path = os.path.join(DOWNLOAD_DIR, file_name)
+
+        # Send a request to download the MP3 file
+        mp3_response = requests.get(download_link, stream=True)
+        #mp3_response.raise_for_status()  # Ensure the download was successful
+        #print("Response status:", mp3_response.status_code)
+        #print("Response headers:", mp3_response.headers)
+        #print("Response content (first 300 chars):", mp3_response.text[:300])
+        #mp3_response.raise_for_status()  # Ensure the download was successful
+        mp3_response.raise_for_status()  # Ensure the download was successful
+        # Determine the file path and write the content to a file
+        #file_name = result.get('title', 'downloaded_song') + '.mp3'
+        with open(file_path, 'wb') as file:
+            for chunk in mp3_response.iter_content(chunk_size=8192):
+                if chunk:
+                    file.write(chunk)
+
+        # Calculate the time it took to download
+        download_time = time.time() - start_time
+
+        # Return the file path and download time
+        #return file_name, download_time
+        print(file_path)
+        return ({
+            'file_path': file_path,
+            'download_time_seconds': download_time
+        })
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return None, None
+
+
+
+def download_mp3_from_youtube2(url,max_retries=3):
     # API endpoint to get the download link
     api_url = f'https://{MP3_DOWNLOADER_HOST}/dl?id={url}'
     print(api_url)
@@ -282,13 +369,15 @@ def partialSeparateYoutubeAudio():
     print('SEPARATING startin')
     separator.separate_to_file(input_path_trimmed, OUTPUT_DIR,codec="mp3", bitrate="128k")
     vocal_path = os.path.join(output_path, "vocals.mp3")
+    print("os.path.exists(vocal_path)",os.path.exists(vocal_path))
     new_vocal_path = os.path.join(output_path, filename)
     if not os.path.exists(vocal_path):
+        print('PATH DOES NOT EXIST')
         return jsonify({"error": "Vocal separation failed"}), 500
         
-    os.rename(vocal_path, new_vocal_path)
+    #os.rename(vocal_path, new_vocal_path)
 
-    response = send_file(new_vocal_path, mimetype="audio/mpeg", as_attachment=True, download_name=filename)
+    response = send_file(vocal_path, mimetype="audio/mpeg", as_attachment=True, download_name=filename)
 
     return response
 
