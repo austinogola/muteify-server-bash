@@ -552,8 +552,8 @@ def get_user_config(current_user):
     return jsonify({
         "email": user.get("email"),
         "plan": plan,
-        "usage_today_minutes": round(today_usage_minutes, 2),
- 
+        "usage_today_minutes": round(today_usage_minutes, 2)
+        }) 
 
 
 
