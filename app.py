@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, send_file
 import os
+from io import BytesIO
 import requests
 from pydub import AudioSegment
 import shutil
@@ -12,6 +13,10 @@ from flask_pymongo import PyMongo
 from flask_bcrypt import Bcrypt
 import jwt
 import wget
+from supabase_utils import (upload_audio_to_supabase,check_file_exists_in_bucket,download_file_from_bucket)
+from functools import wraps
+import threading
+import datetime
 
 
 app = Flask(__name__)
@@ -61,6 +66,29 @@ DOWNLOAD_DIR = 'downloads'
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({"error": "Token is missing"}), 403
+
+        try:
+            token = token.split(" ")[1] if " " in token else token  # Handle "Bearer <token>"
+            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            current_user = data["email"]
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "Token expired"}), 403
+        except Exception as e:
+            print(e)
+            return jsonify({"error": "Invalid token"}), 403
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+
 
 def download_mp3_from_youtube(url,max_retries=3):
     # API endpoint to get the download link
@@ -295,9 +323,32 @@ def separate():
         return jsonify({'error': str(e)}), 500
 
 @app.route("/separate/partial/YT", methods=["POST"])
-def partialSeparateYoutubeAudio():
+@token_required
+def partialSeparateYoutubeAudio(current_user):
+
+    users = mongo.db.users
+    accounts = mongo.db.accounts
+
+    # Fetch user and account
+    user = users.find_one({"email": current_user})
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    account = accounts.find_one({"userId": str(user["_id"])})
+    if not account:
+        return jsonify({"error": "Account not found"}), 404
+
+
+    # Get plan and usage
+    plan = account.get("plan", "Trial")
+    usage_records = account.get("usage", [])
+
+    # Calculate today's usage
+    today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
+    today_usage_minutes = sum(u["minutes"] for u in usage_records if u["date"] == today_date)
     
-    
+    allowed_minutes = PLAN_LIMITS.get(plan, 10)
+
     data = request.json
     videoUrl = data.get("videoUrl")
     start=data.get("start","0")
@@ -306,14 +357,21 @@ def partialSeparateYoutubeAudio():
     requested_duration_seconds = (end - start) / 1000.0
     requested_duration_minutes = requested_duration_seconds / 60.0
 
+
+    if today_usage_minutes + requested_duration_minutes > allowed_minutes:
+        return jsonify({"error": "Daily usage limit exceeded"}), 403
+
+
     if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
         video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
     else:
         return jsonify({"error": "Invalid YouTube URL or ID"}), 400
-    
-    filename = f"{video_id}_{start}_{end}.mp3"
-    #file_exists_in_storage = check_file_exists_in_bucket(filename=filename,bucket_folder=VOCALS_FOLDER)
-    file_exists_in_storage = False
+
+    original_mp3_name = f"{video_id}.mp3" 
+    #mp3_file_exists = check_file_exists_in_bucket(filename=original_mp3_name)
+    filename = f"{video_id}_{start/1000}_{end/1000}.mp3"
+    file_exists_in_storage = check_file_exists_in_bucket(filename=filename,bucket_folder=VOCALS_FOLDER)
+    #file_exists_in_storage = False
     print('file_exists_in_storage',file_exists_in_storage)
     
     if(file_exists_in_storage):
@@ -326,7 +384,9 @@ def partialSeparateYoutubeAudio():
    
            usage_entry = {
             "date": today_date,
-            "minutes": requested_duration_minutes
+            "minutes": requested_duration_minutes,
+            "videoUrl":videoUrl,
+            "fromCache":True
            }
            accounts.update_one(
             {"userId": str(user["_id"])},
@@ -375,9 +435,25 @@ def partialSeparateYoutubeAudio():
         print('PATH DOES NOT EXIST')
         return jsonify({"error": "Vocal separation failed"}), 500
         
-    #os.rename(vocal_path, new_vocal_path)
+    os.rename(vocal_path, new_vocal_path)
 
-    response = send_file(vocal_path, mimetype="audio/mpeg", as_attachment=True, download_name=filename)
+    response = send_file(new_vocal_path, mimetype="audio/mpeg", as_attachment=True, download_name=filename)
+
+
+    # After successful separation, record usage
+    usage_entry = {
+     "date": today_date,
+     "minutes": requested_duration_minutes,
+     "videoUrl":videoUrl,
+     "fromCache":False
+    }
+    accounts.update_one(
+     {"userId": str(user["_id"])},
+     {"$push": {"usage": usage_entry}}
+        )
+    timer = threading.Timer(5.0, upload_audio_to_supabase, args=[new_vocal_path,True,VOCALS_FOLDER])
+    timer.start()
+
 
     return response
 
