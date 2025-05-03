@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify, send_file
 import os
 from io import BytesIO
@@ -17,7 +18,8 @@ from supabase_utils import (upload_audio_to_supabase,check_file_exists_in_bucket
 from functools import wraps
 import threading
 import datetime
-
+import glob
+from pydub.utils import mediainfo
 
 app = Flask(__name__)
 CORS(app)
@@ -44,7 +46,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_PUBLIC_KEY = os.getenv("SUPABASE_PUBLIC_KEY")
 BUCKET_NAME = "mutify-vocals-audios"
 
-
+MP3_DOWN = os.getenv("MP3_DOWN")
 app.config["MONGO_URI"] = os.getenv("MONGO_DB_URL")
 mongo = PyMongo(app)
 bcrypt = Bcrypt(app)
@@ -93,12 +95,12 @@ def token_required(f):
 def download_mp3_from_youtube(url,max_retries=3):
     # API endpoint to get the download link
     #api_url = f'https://{MP3_DOWNLOADER_HOST}/dl?id={url}'
-    api_url = f'https://{NEW_DOWN}/api/converttomp3'
+    api_url = f'https://{MP3_DOWN}/download/mp3'
     print(api_url)
     headers = {
           'Content-Type': "application/json",
         'x-rapidapi-key': RAPIDAPI_KEY,  # Replace with your RapidAPI key
-        'x-rapidapi-host':NEW_DOWN,  # Replace with your RapidAPI host
+        'x-rapidapi-host':MP3_DOWN,  # Replace with your RapidAPI host
     }
     payload = {"url":f"https://www.youtube.com/watch?v={url}"}
     start_time = time.time()
@@ -112,11 +114,11 @@ def download_mp3_from_youtube(url,max_retries=3):
     while attempt < max_retries:
         try:
             print(f'ATTEMPT {attempt}')
-            response = requests.post(api_url, headers=headers,json=payload)
+            response = requests.get(api_url, headers=headers,params=payload)
             #response.raise_for_status()
             result = response.json()
             print(result)
-            download_link = result.get('url')
+            download_link = result.get('downloadUrl')
             response.raise_for_status()
             if download_link:  # Valid link received
                 break
@@ -126,7 +128,7 @@ def download_mp3_from_youtube(url,max_retries=3):
             print(f"Attempt {attempt + 1} failed with error: {e}")
         attempt += 1
 
-    if not result or not result.get('url'):
+    if not result or not result.get('downloadUrl'):
         print("Failed to get a valid MP3 link after retries.")
         return None, None
 
@@ -138,7 +140,7 @@ def download_mp3_from_youtube(url,max_retries=3):
         #result = response.json()  # Parse JSON response
         #print(result)
         # Extract download link
-        download_link = result.get('url')
+        download_link = result.get('downloadUrl')
 
 
         #file_name = result.get('title', 'downloaded_song') + '.mp3'
@@ -156,7 +158,7 @@ def download_mp3_from_youtube(url,max_retries=3):
         # Determine the file path and write the content to a file
         #file_name = result.get('title', 'downloaded_song') + '.mp3'
         with open(file_path, 'wb') as file:
-            for chunk in mp3_response.iter_content(chunk_size=8192):
+            for chunk in mp3_response.iter_content(chunk_size=1048576):
                 if chunk:
                     file.write(chunk)
 
@@ -369,7 +371,7 @@ def partialSeparateYoutubeAudio(current_user):
 
     original_mp3_name = f"{video_id}.mp3" 
     #mp3_file_exists = check_file_exists_in_bucket(filename=original_mp3_name)
-    filename = f"{video_id}_{start/1000}_{end/1000}.mp3"
+    filename = f"{video_id}_{start}_{end}.mp3"
     file_exists_in_storage = check_file_exists_in_bucket(filename=filename,bucket_folder=VOCALS_FOLDER)
     #file_exists_in_storage = False
     print('file_exists_in_storage',file_exists_in_storage)
@@ -429,6 +431,7 @@ def partialSeparateYoutubeAudio(current_user):
     print('SEPARATING startin')
     separator.separate_to_file(input_path_trimmed, OUTPUT_DIR,codec="mp3", bitrate="128k")
     vocal_path = os.path.join(output_path, "vocals.mp3")
+    print(vocal_path)
     print("os.path.exists(vocal_path)",os.path.exists(vocal_path))
     new_vocal_path = os.path.join(output_path, filename)
     if not os.path.exists(vocal_path):
