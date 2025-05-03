@@ -457,5 +457,105 @@ def partialSeparateYoutubeAudio(current_user):
 
     return response
 
+@app.route('/get_duration/<video_id>', methods=['GET'])
+def get_audio_duration(video_id):
+    try:
+        # Look for a matching audio file with common extensions
+        #file_name =f"{url}.mp3"
+        #file_path = os.path.join(DOWNLOAD_DIR, file_name)
+        audio_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3"))
+        if not audio_files:
+            return jsonify({"error": "File not found"}), 404
+
+        audio_file = audio_files[0]
+
+        # Get duration using pydub/mediainfo (uses ffprobe)
+        info = mediainfo(audio_file)
+        duration = float(info['duration'])
+
+        return jsonify({
+            "video_id": video_id,
+            "duration_seconds": duration
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/signup", methods=["POST"])
+def signup():
+    users = mongo.db.users
+    accounts = mongo.db.accounts
+    data = request.json
+    email = data.get("email")
+    password = data.get("password")
+
+    if users.find_one({"email":email}):
+        return jsonify({"error": "User with email  already exists"}), 409
+
+    hashed_pw = bcrypt.generate_password_hash(password).decode('utf-8')
+    user_result = users.insert_one({"email": email, "password": hashed_pw,"plan":"Trial"})
+    print(user_result)
+    user_id = str(user_result.inserted_id)
+    accounts.insert_one({
+        "userId": user_id,
+        "usage": [],
+        "payments": [],
+        "plan": "Trial"  # Default to "Trial" plan
+    })
+    token = jwt.encode({"email": email, "exp": datetime.datetime.utcnow() + datetime.timedelta(days=21)}, SECRET_KEY, algorithm="HS256")
+    return jsonify({"message": "User created successfully","success":True,"error":False,"token":token}), 201
+
+@app.route("/login", methods=["POST"])
+def login():
+    users = mongo.db.users
+    data = request.json
+    email = data.get("email")
+    password = data.get("password")
+    user = users.find_one({"email": email})
+
+    if user:
+        if bcrypt.check_password_hash(user["password"], password):
+            token = jwt.encode({
+                "email": email,
+                "exp": datetime.datetime.utcnow() + datetime.timedelta(days=21)
+            }, SECRET_KEY, algorithm="HS256")
+            return jsonify({"token": token,"success":True,"error":False})
+        else:
+            return jsonify({"error": "Invalid credentials"}), 401
+    else:
+        return jsonify({"error": "No user with this email"}), 401
+
+@app.route('/config', methods=['GET'])
+@token_required
+def get_user_config(current_user):
+    users = mongo.db.users
+    accounts = mongo.db.accounts
+
+    # Fetch user and account
+    user = users.find_one({"email": current_user})
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    account = accounts.find_one({"userId": str(user["_id"])})
+    if not account:
+        return jsonify({"error": "Account not found"}), 404
+
+    # Extract plan and usage
+    plan = account.get("plan", "Trial")
+    usage_records = account.get("usage", [])
+
+    today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
+    today_usage_minutes = sum(u["minutes"] for u in usage_records if u["date"] == today_date)
+
+    allowed_minutes = PLAN_LIMITS.get(plan, 10)  # default to 10 if not found
+    remaining_minutes = max(allowed_minutes - today_usage_minutes, 0)
+
+    return jsonify({
+        "email": user.get("email"),
+        "plan": plan,
+        "usage_today_minutes": round(today_usage_minutes, 2),
+ 
+
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
