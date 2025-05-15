@@ -19,8 +19,9 @@ from functools import wraps
 import threading
 import datetime
 import glob
+import numpy as np
 from pydub.utils import mediainfo
-
+from downloaders import (donwloader_one)
 app = Flask(__name__)
 CORS(app)
 load_dotenv()
@@ -28,6 +29,8 @@ load_dotenv()
 #separator = Separator('spleeter:2stems','multiprocess:True')
 separator = Separator('spleeter:2stems', multiprocess=False)
 
+dummy_waveform = np.zeros((220500, 2), dtype=np.float32)
+separator.separate(dummy_waveform)
 print("SEPARATOR",separator)
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'separated'
@@ -325,32 +328,10 @@ def separate():
         return jsonify({'error': str(e)}), 500
 
 @app.route("/separate/partial/YT", methods=["POST"])
-@token_required
-def partialSeparateYoutubeAudio(current_user):
-
-    users = mongo.db.users
-    accounts = mongo.db.accounts
-
-    # Fetch user and account
-    user = users.find_one({"email": current_user})
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-
-    account = accounts.find_one({"userId": str(user["_id"])})
-    if not account:
-        return jsonify({"error": "Account not found"}), 404
-
+def partialSeparateYoutubeAudio():
 
     # Get plan and usage
-    plan = account.get("plan", "Trial")
-    usage_records = account.get("usage", [])
-
-    # Calculate today's usage
-    today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
-    today_usage_minutes = sum(u["minutes"] for u in usage_records if u["date"] == today_date)
-    
-    allowed_minutes = PLAN_LIMITS.get(plan, 10)
-
+  
     data = request.json
     videoUrl = data.get("videoUrl")
     start=data.get("start","0")
@@ -358,11 +339,6 @@ def partialSeparateYoutubeAudio(current_user):
 
     requested_duration_seconds = (end - start) / 1000.0
     requested_duration_minutes = requested_duration_seconds / 60.0
-
-
-    if today_usage_minutes + requested_duration_minutes > allowed_minutes:
-        return jsonify({"error": "Daily usage limit exceeded"}), 403
-
 
     if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
         video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
@@ -383,17 +359,7 @@ def partialSeparateYoutubeAudio(current_user):
             print('FILE DATA IS INVALID')
             #return abort(404, description="File not found or download failed")
         else:  
-   
-           usage_entry = {
-            "date": today_date,
-            "minutes": requested_duration_minutes,
-            "videoUrl":videoUrl,
-            "fromCache":True
-           }
-           accounts.update_one(
-            {"userId": str(user["_id"])},
-            {"$push": {"usage": usage_entry}}
-           )      
+    
            return send_file(
             BytesIO(file_data),
             mimetype='audio/mpeg',
@@ -411,7 +377,7 @@ def partialSeparateYoutubeAudio(current_user):
         print('YT MP3 DOES NOT ALREADY EXISTS, DOWNLOADING MP3')
         #audio_info = download_mp3(video_id)
 
-        audio_info = download_mp3_from_youtube(video_id)
+        audio_info = donwloader_one(video_id)
         if (not audio_info["file_path"])or not  os.path.exists(audio_info["file_path"]):
                 print("download path doesn't exists")
                 return jsonify({"error": "MP3 download failed"}), 500
@@ -441,21 +407,6 @@ def partialSeparateYoutubeAudio(current_user):
     os.rename(vocal_path, new_vocal_path)
 
     response = send_file(new_vocal_path, mimetype="audio/mpeg", as_attachment=True, download_name=filename)
-
-
-    # After successful separation, record usage
-    usage_entry = {
-     "date": today_date,
-     "minutes": requested_duration_minutes,
-     "videoUrl":videoUrl,
-     "fromCache":False
-    }
-    accounts.update_one(
-     {"userId": str(user["_id"])},
-     {"$push": {"usage": usage_entry}}
-        )
-    timer = threading.Timer(5.0, upload_audio_to_supabase, args=[new_vocal_path,True,VOCALS_FOLDER])
-    timer.start()
 
 
     return response
