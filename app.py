@@ -21,6 +21,8 @@ import threading
 import datetime
 import glob
 from pydub.utils import mediainfo
+from spleeter.audio.adapter import AudioAdapter
+import soundfile as sf
 
 app = Flask(__name__)
 CORS(app)
@@ -267,31 +269,45 @@ def partialSeparateYoutubeAudio():
 
         # Trim using pydub
     print('Starting trim')
-    # Load full mp3 into memory
     with open(mp3_path, "rb") as f:
         full_audio = AudioSegment.from_file(f, format="mp3")
-    # audio = AudioSegment.from_file(mp3_path)
-    audio_segment = full_audio[start:end]  # 10 seconds in ms
-        
+
+    audio_segment = full_audio[start:end]  # Trimmed portion in ms
+
+    # Export trimmed segment to a BytesIO buffer in WAV (not MP3 — WAV is uncompressed and Spleeter prefers it)
     trimmed_io = BytesIO()
-    audio_segment.export(trimmed_io, format="mp3")
+    audio_segment.export(trimmed_io, format="wav")
     trimmed_io.seek(0)
-    print('SEPARATING startin')
-    separator.separate_to_file(trimmed_io, OUTPUT_DIR,codec="mp3", bitrate="128k")
-    vocal_path = os.path.join(output_path, "vocals.mp3")
-    print(vocal_path)
-    print("os.path.exists(vocal_path)",os.path.exists(vocal_path))
-    new_vocal_path = os.path.join(output_path, filename)
-    if not os.path.exists(vocal_path):
-        print('PATH DOES NOT EXIST')
-        return jsonify({"error": "Vocal separation failed"}), 500
-        
-    os.rename(vocal_path, new_vocal_path)
 
-    response = send_file(new_vocal_path, mimetype="audio/mpeg", as_attachment=True, download_name=filename)
+    # Load audio into Spleeter-compatible waveform
+    print('SEPARATING starting')
+    audio_loader = AudioAdapter.default()
+    waveform, sample_rate = audio_loader.load(trimmed_io)
 
+    # Separate vocals
+    prediction = separator.separate(waveform)
+    vocals = prediction['vocals']
 
-    return response
+    # Save vocals into a BytesIO buffer as WAV first (optional intermediate step)
+    vocal_io_wav = BytesIO()
+    sf.write(vocal_io_wav, vocals, sample_rate, format='WAV')
+    vocal_io_wav.seek(0)
+
+    # Convert WAV to MP3 using pydub
+    vocal_audio = AudioSegment.from_file(vocal_io_wav, format="wav")
+    vocal_io_mp3 = BytesIO()
+    vocal_audio.export(vocal_io_mp3, format="mp3", bitrate="128k")
+    vocal_io_mp3.seek(0)
+
+    # Optional: upload this buffer to Supabase or save to disk if needed
+
+    # Send MP3 back to client
+    return send_file(
+        vocal_io_mp3,
+        mimetype="audio/mpeg",
+        as_attachment=True,
+        download_name=filename
+    )
 
 @app.route('/get_duration/<video_id>', methods=['GET'])
 def get_audio_duration(video_id):
