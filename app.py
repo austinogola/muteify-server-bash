@@ -15,6 +15,7 @@ from flask_bcrypt import Bcrypt
 import jwt
 import wget
 from supabase_utils import (upload_audio_to_supabase,check_file_exists_in_bucket,download_file_from_bucket)
+from downloaders import (donwloader_one)
 from functools import wraps
 import threading
 import datetime
@@ -95,12 +96,12 @@ def token_required(f):
 def download_mp3_from_youtube(url,max_retries=3):
     # API endpoint to get the download link
     #api_url = f'https://{MP3_DOWNLOADER_HOST}/dl?id={url}'
-    api_url = f'https://{MP3_DOWN}/download/mp3'
+    api_url = f'https://{NEW_DOWN}/download/mp3'
     print(api_url)
     headers = {
           'Content-Type': "application/json",
         'x-rapidapi-key': RAPIDAPI_KEY,  # Replace with your RapidAPI key
-        'x-rapidapi-host':MP3_DOWN,  # Replace with your RapidAPI host
+        'x-rapidapi-host':NEW_DOWN,  # Replace with your RapidAPI host
     }
     payload = {"url":f"https://www.youtube.com/watch?v={url}"}
     start_time = time.time()
@@ -253,7 +254,8 @@ def partialSeparateYoutubeAudio():
         print('YT MP3 DOES NOT ALREADY EXISTS, DOWNLOADING MP3')
         #audio_info = download_mp3(video_id)
 
-        audio_info = download_mp3_from_youtube(video_id)
+        # audio_info = download_mp3_from_youtube(video_id)
+        audio_info = donwloader_one(video_id)
         if (not audio_info["file_path"])or not  os.path.exists(audio_info["file_path"]):
                 print("download path doesn't exists")
                 return jsonify({"error": "MP3 download failed"}), 500
