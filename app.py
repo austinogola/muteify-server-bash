@@ -146,17 +146,11 @@ def download_mp3_from_youtube(url,max_retries=3):
         #file_name = result.get('title', 'downloaded_song') + '.mp3'
         file_name =f"{url}.mp3"
         file_path = os.path.join(DOWNLOAD_DIR, file_name)
-
-        # Send a request to download the MP3 file
+   
         mp3_response = requests.get(download_link, stream=True)
-        #mp3_response.raise_for_status()  # Ensure the download was successful
-        #print("Response status:", mp3_response.status_code)
-        #print("Response headers:", mp3_response.headers)
-        #print("Response content (first 300 chars):", mp3_response.text[:300])
-        #mp3_response.raise_for_status()  # Ensure the download was successful
+        
         mp3_response.raise_for_status()  # Ensure the download was successful
-        # Determine the file path and write the content to a file
-        #file_name = result.get('title', 'downloaded_song') + '.mp3'
+      
         with open(file_path, 'wb') as file:
             for chunk in mp3_response.iter_content(chunk_size=1048576):
                 if chunk:
@@ -176,116 +170,6 @@ def download_mp3_from_youtube(url,max_retries=3):
     except requests.exceptions.RequestException as e:
         print(f"Error: {e}")
         return None, None
-
-
-
-def download_mp3_from_youtube2(url,max_retries=3):
-    # API endpoint to get the download link
-    api_url = f'https://{MP3_DOWNLOADER_HOST}/dl?id={url}'
-    print(api_url)
-    headers = {
-        'x-rapidapi-key': RAPIDAPI_KEY,  # Replace with your RapidAPI key
-        'x-rapidapi-host':MP3_DOWNLOADER_HOST,  # Replace with your RapidAPI host
-    }
-    start_time = time.time()
-
-    attempt = 0
-    result = None
-   
-    response = ''
-    result = ''
-
-    while attempt < max_retries:
-        try:
-            print(f'ATTEMPT {attempt}')
-            response = requests.get(api_url, headers=headers)
-            response.raise_for_status()
-            result = response.json()
-
-            download_link = result.get('link')
-            if download_link:  # Valid link received
-                break
-            else:
-                print(f"Attempt {attempt + 1}: No valid link returned, retrying...")
-        except requests.exceptions.RequestException as e:
-            print(f"Attempt {attempt + 1} failed with error: {e}")
-        attempt += 1
-
-    if not result or not result.get('link'):
-        print("Failed to get a valid MP3 link after retries.")
-        return None, None
-
-    try:
-        # Make the request to get the MP3 link
-        #response = requests.get(api_url, headers=headers)
-        #response.raise_for_status()  # Check for errors in the response
-        #result = response.json()  # Parse JSON response
-        print(result)
-        # Extract download link
-        download_link = result.get('link')
-        download_link = download_link.replace('&uT=R&uN=bWhpc2hhbTM5NzM%3D', '')  
-
-        #file_name = result.get('title', 'downloaded_song') + '.mp3'
-        file_name =f"{url}.mp3"
-        file_path = os.path.join(DOWNLOAD_DIR, file_name)
-        print(f'Trying to get {download_link}')
-        # Send a request to download the MP3 file
-       
-        mp3_headers = {
-        'User-Agent': (
-         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-         'AppleWebKit/537.36 (KHTML, like Gecko) '
-         'Chrome/122.0.0.0 Safari/537.36'
-         ),
-        'Referer': 'https://example.com/',  # Sometimes needed
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-        }
-        payload = {}
-        hdd = {}
-        mp3_response = requests.get(download_link, stream=True,headers=mp3_headers,data=payload)
-        print(mp3_response)
-        mp3_response.raise_for_status()  # Ensure the download was successful
-
-
-        # Determine the file path and write the content to a file
-        #file_name = result.get('title', 'downloaded_song') + '.mp3'
-        with open(file_path, 'wb') as file:
-            for chunk in mp3_response.iter_content(chunk_size=8192):
-                if chunk:
-                    file.write(chunk)
-        
-        # Calculate the time it took to download
-        download_time = time.time() - start_time
-        
-        # Return the file path and download time
-        #return file_name, download_time
-        return ({
-            'file_path': file_path,
-            'download_time_seconds': download_time
-        })
-    
-    except requests.exceptions.RequestException as e:
-        print(f"Error: {e}")
-        print(f"trying wget")
-        try:
-            # Using subprocess to run system wget command
-            #subprocess.run(['wget', download_link, '-O', file_path], check=True)
-            # Or, using the Python wget module instead:
-            #import wget
-            wget.download(download_link, out=file_path)
-            download_time = time.time() - start_time
-            return ({
-                'file_path': file_path,
-               'download_time_seconds': download_time
-            })
-        except Exception as wget_error:
-            print(f"wget fallback also failed: {wget_error}")
-            return None, Noneprint(f"Requests failed with error: {e}")
-        print("Trying wget fallback...")
-        #return None, None
-    
-
 
 
 
@@ -325,43 +209,12 @@ def separate():
         return jsonify({'error': str(e)}), 500
 
 @app.route("/separate/partial/YT", methods=["POST"])
-@token_required
-def partialSeparateYoutubeAudio(current_user):
-
-    users = mongo.db.users
-    accounts = mongo.db.accounts
-
-    # Fetch user and account
-    user = users.find_one({"email": current_user})
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-
-    account = accounts.find_one({"userId": str(user["_id"])})
-    if not account:
-        return jsonify({"error": "Account not found"}), 404
-
-
-    # Get plan and usage
-    plan = account.get("plan", "Trial")
-    usage_records = account.get("usage", [])
-
-    # Calculate today's usage
-    today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
-    today_usage_minutes = sum(u["minutes"] for u in usage_records if u["date"] == today_date)
-    
-    allowed_minutes = PLAN_LIMITS.get(plan, 10)
+def partialSeparateYoutubeAudio():
 
     data = request.json
     videoUrl = data.get("videoUrl")
     start=data.get("start","0")
     end=data.get("end","10000")
-
-    requested_duration_seconds = (end - start) / 1000.0
-    requested_duration_minutes = requested_duration_seconds / 60.0
-
-
-    if today_usage_minutes + requested_duration_minutes > allowed_minutes:
-        return jsonify({"error": "Daily usage limit exceeded"}), 403
 
 
     if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
@@ -382,18 +235,7 @@ def partialSeparateYoutubeAudio(current_user):
         if file_data is None:
             print('FILE DATA IS INVALID')
             #return abort(404, description="File not found or download failed")
-        else:  
-   
-           usage_entry = {
-            "date": today_date,
-            "minutes": requested_duration_minutes,
-            "videoUrl":videoUrl,
-            "fromCache":True
-           }
-           accounts.update_one(
-            {"userId": str(user["_id"])},
-            {"$push": {"usage": usage_entry}}
-           )      
+        else:     
            return send_file(
             BytesIO(file_data),
             mimetype='audio/mpeg',
@@ -423,13 +265,17 @@ def partialSeparateYoutubeAudio(current_user):
 
         # Trim using pydub
     print('Starting trim')
-    audio = AudioSegment.from_file(mp3_path)
-    audio_segment = audio[start:end]  # 10 seconds in ms
+    # Load full mp3 into memory
+    with open(mp3_path, "rb") as f:
+        full_audio = AudioSegment.from_file(f, format="mp3")
+    # audio = AudioSegment.from_file(mp3_path)
+    audio_segment = full_audio[start:end]  # 10 seconds in ms
         
-    audio_segment.export(input_path_trimmed, format="mp3")
-    # Separate trimmed audio
+    trimmed_io = BytesIO()
+    audio_segment.export(trimmed_io, format="mp3")
+    trimmed_io.seek(0)
     print('SEPARATING startin')
-    separator.separate_to_file(input_path_trimmed, OUTPUT_DIR,codec="mp3", bitrate="128k")
+    separator.separate_to_file(trimmed_io, OUTPUT_DIR,codec="mp3", bitrate="128k")
     vocal_path = os.path.join(output_path, "vocals.mp3")
     print(vocal_path)
     print("os.path.exists(vocal_path)",os.path.exists(vocal_path))
@@ -441,21 +287,6 @@ def partialSeparateYoutubeAudio(current_user):
     os.rename(vocal_path, new_vocal_path)
 
     response = send_file(new_vocal_path, mimetype="audio/mpeg", as_attachment=True, download_name=filename)
-
-
-    # After successful separation, record usage
-    usage_entry = {
-     "date": today_date,
-     "minutes": requested_duration_minutes,
-     "videoUrl":videoUrl,
-     "fromCache":False
-    }
-    accounts.update_one(
-     {"userId": str(user["_id"])},
-     {"$push": {"usage": usage_entry}}
-        )
-    timer = threading.Timer(5.0, upload_audio_to_supabase, args=[new_vocal_path,True,VOCALS_FOLDER])
-    timer.start()
 
 
     return response
