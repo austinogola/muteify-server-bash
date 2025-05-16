@@ -65,6 +65,15 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+
+
+ALL_PLANS = [
+    {"name":'Basic-Trial',"minutes":60,"days":3,"test_prod_id":'prod_SIWSeodkjoYwtQ',"live_prod_id":'prod_SIvTcRCZbWzxMk'},
+    {"name":'Premium-Trial',"minutes":60,"days":3,"test_prod_id":'prod_SIXfHdO7F14kgZ',"live_prod_id":'prod_SIvSsVTJBsFv1O'},
+    {"name":'Basic',"minutes":45,"days":35,"test_prod_id":'prod_SIv7fc6J9GgW5Q',"live_prod_id":'prod_SIvOpOnPDR0pYn'},
+    {"name":'Premium',"minutes":9999,"days":35,"test_prod_id":'prod_SIv58GHgV6gnWy',"live_prod_id":'prod_SIvQywR4mFMLzA'},
+]
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
