@@ -29,8 +29,8 @@ load_dotenv()
 #separator = Separator('spleeter:2stems','multiprocess:True')
 separator = Separator('spleeter:2stems', multiprocess=False)
 
-dummy_waveform = np.zeros((220500, 2), dtype=np.float32)
-separator.separate(dummy_waveform)
+# dummy_waveform = np.zeros((220500, 2), dtype=np.float32)
+# separator.separate(dummy_waveform)
 print("SEPARATOR",separator)
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'separated'
