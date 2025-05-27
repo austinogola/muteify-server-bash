@@ -21,7 +21,7 @@ import datetime
 import glob
 import numpy as np
 from pydub.utils import mediainfo
-from downloaders import (donwloader_one)
+from downloaders import (major_downloader)
 app = Flask(__name__)
 CORS(app)
 load_dotenv()
@@ -29,8 +29,8 @@ load_dotenv()
 #separator = Separator('spleeter:2stems','multiprocess:True')
 separator = Separator('spleeter:2stems', multiprocess=False)
 
-# dummy_waveform = np.zeros((220500, 2), dtype=np.float32)
-# separator.separate(dummy_waveform)
+dummy_waveform = np.zeros((220500, 2), dtype=np.float32)
+separator.separate(dummy_waveform)
 print("SEPARATOR",separator)
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'separated'
@@ -65,26 +65,6 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')
-        if not token:
-            return jsonify({"error": "Token is missing"}), 403
-
-        try:
-            token = token.split(" ")[1] if " " in token else token  # Handle "Bearer <token>"
-            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            current_user = data["email"]
-        except jwt.ExpiredSignatureError:
-            return jsonify({"error": "Token expired"}), 403
-        except Exception as e:
-            print(e)
-            return jsonify({"error": "Invalid token"}), 403
-
-        return f(current_user, *args, **kwargs)
-    return decorated
-
 
 
 @app.route('/download', methods=['POST'])
@@ -109,7 +89,7 @@ def download():
         print('YT MP3 DOES NOT ALREADY EXISTS, DOWNLOADING MP3')
         #audio_info = download_mp3(video_id)
 
-        audio_info = donwloader_one(video_id)
+        audio_info = major_downloader(video_id)
         if (not audio_info["file_path"])or not  os.path.exists(audio_info["file_path"]):
                 print("download path doesn't exists")
                 return jsonify({"error": "MP3 download failed"}), 500
@@ -154,49 +134,30 @@ def separate():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+
+@app.route("/download", methods=["POST"])
+def downloadVid():
+    data = request.json
+    videoUrl = data.get("videoUrl")
+    
+    if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
+        video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
+        major_downloader(video_id)
+    else:
+        return jsonify({"error": "Invalid YouTube URL or ID"}), 400
+
 @app.route("/separate/partial/YT", methods=["POST"])
-@token_required
-def partialSeparateYoutubeAudio(current_user):
-    
-    users = mongo.db.users
-    accounts = mongo.db.accounts
-            
-    user = users.find_one({"email": current_user})
-    if not user:
-        return jsonify({"error": "User not found"}), 404
+def partialSeparateYoutubeAudio():
 
-    account = accounts.find_one({"userId": str(user["_id"])})
-    if not account:
-        return jsonify({"error": "Account not found"}), 404
-    
-    
-    plan = account.get("plan")
-    usage_records = account.get("usage", [])
-    
-    if not plan:
-        return jsonify({"error":True,"message":"You don't have a usage plan"}), 404
-    
-    today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
-    today_usage_minutes = sum(u["minutes"] for u in usage_records if u["date"] == today_date)
-    
-    the_plan_obj = [it for it in ALL_PLANS if it["name"]==plan][0]
-
-    allowed_minutes = the_plan_obj['minutes']  # default to 10 if not found
-    
-    print(plan,allowed_minutes)
-    remaining_minutes = max(allowed_minutes - today_usage_minutes, 0)
-    
+    # Get plan and usage
+  
     data = request.json
     videoUrl = data.get("videoUrl")
     start=data.get("start","0")
     end=data.get("end","10000")
-    
-    requested_duration_seconds = (end - start) / 1000.0
-    requested_duration_minutes = requested_duration_seconds / 60.0
-    
-    if today_usage_minutes + requested_duration_minutes > allowed_minutes:
-        return jsonify({"error":True,"message": "Daily usage limit exceeded"}), 403
-    
+
+
     if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
         video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
     else:
@@ -234,7 +195,7 @@ def partialSeparateYoutubeAudio(current_user):
         print('YT MP3 DOES NOT ALREADY EXISTS, DOWNLOADING MP3')
         #audio_info = download_mp3(video_id)
 
-        audio_info = donwloader_one(video_id)
+        audio_info = major_downloader(video_id)
         if (not audio_info["file_path"])or not  os.path.exists(audio_info["file_path"]):
                 print("download path doesn't exists")
                 return jsonify({"error": "MP3 download failed"}), 500
