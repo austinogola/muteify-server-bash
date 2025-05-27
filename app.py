@@ -21,7 +21,7 @@ import datetime
 import glob
 import numpy as np
 from pydub.utils import mediainfo
-from downloaders import (donwloader_one)
+from downloaders import (major_downloader)
 app = Flask(__name__)
 CORS(app)
 load_dotenv()
@@ -89,7 +89,7 @@ def download():
         print('YT MP3 DOES NOT ALREADY EXISTS, DOWNLOADING MP3')
         #audio_info = download_mp3(video_id)
 
-        audio_info = donwloader_one(video_id)
+        audio_info = major_downloader(video_id)
         if (not audio_info["file_path"])or not  os.path.exists(audio_info["file_path"]):
                 print("download path doesn't exists")
                 return jsonify({"error": "MP3 download failed"}), 500
@@ -133,6 +133,19 @@ def separate():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+
+@app.route("/download", methods=["POST"])
+def downloadVid():
+    data = request.json
+    videoUrl = data.get("videoUrl")
+    
+    if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
+        video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
+        major_downloader(video_id)
+    else:
+        return jsonify({"error": "Invalid YouTube URL or ID"}), 400
 
 @app.route("/separate/partial/YT", methods=["POST"])
 def partialSeparateYoutubeAudio():
@@ -182,7 +195,7 @@ def partialSeparateYoutubeAudio():
         print('YT MP3 DOES NOT ALREADY EXISTS, DOWNLOADING MP3')
         #audio_info = download_mp3(video_id)
 
-        audio_info = donwloader_one(video_id)
+        audio_info = major_downloader(video_id)
         if (not audio_info["file_path"])or not  os.path.exists(audio_info["file_path"]):
                 print("download path doesn't exists")
                 return jsonify({"error": "MP3 download failed"}), 500
