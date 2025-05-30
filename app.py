@@ -262,7 +262,7 @@ def partialSeparateYoutubeAudio(current_user):
 
             # mp3_clip_name = f"{video_id}_{start/1000}_{end/1000}."
             print('Starting trim of raw audio')
-            input_path_trimmed = os.path.join(UPLOAD_DIR, mp3_name)
+            input_path_trimmed = os.path.join(UPLOAD_DIR, vocal_clip_name)
             
             audio = AudioSegment.from_file(mp3_path)
             audio_segment = audio[start:end]  
