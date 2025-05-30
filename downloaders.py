@@ -373,8 +373,12 @@ def major_downloader(vidId,start=None,end=None):
         
     file_path = os.path.join(DOWNLOAD_DIR, file_name)
     
+    file_in_global = file_exists_in_b2(file_name,DOWNLOAD_BUCKET_NAME)
+    
+    #check if file exists locally
     if os.path.exists(file_path):
-        if not file_exists_in_b2(file_name,DOWNLOAD_BUCKET_NAME):
+        #if exists loally but not globally, upload
+        if not file_in_global:
             print("Uploading file")
             thread = threading.Thread(target=upload_to_b2, args=( file_path,file_name, os.getenv("DOWNLOAD_BUCKET_NAME")))
             thread.start()
@@ -383,7 +387,7 @@ def major_downloader(vidId,start=None,end=None):
             'download_time_seconds': 'immediate'
         })
     else:
-        if(file_exists_in_b2(file_name,DOWNLOAD_BUCKET_NAME)):
+        if(file_in_global):
             print("File exists in bucket. Fetching")
             ans = download_from_b2(file_name,DOWNLOAD_BUCKET_NAME,file_path,start_time)
             
