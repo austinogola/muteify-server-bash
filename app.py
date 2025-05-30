@@ -152,6 +152,7 @@ def downloadVid(video_url):
     else:
         return jsonify({"error": "Invalid YouTube URL or ID"}), 400
 
+    return jsonify({"error":False})
 
 
 def token_required(f):
