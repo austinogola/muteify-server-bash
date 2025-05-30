@@ -141,10 +141,10 @@ def separate():
 
 
 DOWNLOAD_BUCKET_NAME = os.getenv("DOWNLOAD_BUCKET_NAME")
-@app.route("/download", methods=["POST"])
-def downloadVid():
-    data = request.json
-    videoUrl = data.get("videoUrl")
+@app.route("/download/<video_url>", methods=["GET"])
+def downloadVid(video_url):
+    # data = request.json
+    videoUrl = video_url
     
     if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
         video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
@@ -152,6 +152,7 @@ def downloadVid():
     else:
         return jsonify({"error": "Invalid YouTube URL or ID"}), 400
 
+    return jsonify({"error":False})
 
 
 def token_required(f):
@@ -261,7 +262,7 @@ def partialSeparateYoutubeAudio(current_user):
 
             # mp3_clip_name = f"{video_id}_{start/1000}_{end/1000}."
             print('Starting trim of raw audio')
-            input_path_trimmed = os.path.join(UPLOAD_DIR, mp3_name)
+            input_path_trimmed = os.path.join(UPLOAD_DIR, vocal_clip_name)
             
             audio = AudioSegment.from_file(mp3_path)
             audio_segment = audio[start:end]  

@@ -42,7 +42,7 @@ def file_exists_in_b2(file_name, bucket_name):
     try:
         bucket.get_file_info_by_name(file_name)
         return True
-    except NonExistentFileName:
+    except Exception as e:
         return False
 
 
