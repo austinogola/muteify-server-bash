@@ -141,10 +141,10 @@ def separate():
 
 
 DOWNLOAD_BUCKET_NAME = os.getenv("DOWNLOAD_BUCKET_NAME")
-@app.route("/download", methods=["POST"])
-def downloadVid():
-    data = request.json
-    videoUrl = data.get("videoUrl")
+@app.route("/download/<video_url>", methods=["GET"])
+def downloadVid(video_url):
+    # data = request.json
+    videoUrl = video_url
     
     if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
         video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
