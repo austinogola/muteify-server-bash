@@ -4,6 +4,7 @@ import os
 from io import BytesIO
 import requests
 from pydub import AudioSegment
+from cachetools import LRUCache
 import shutil
 from spleeter.separator import Separator
 from werkzeug.utils import secure_filename
@@ -27,6 +28,9 @@ from b2_helper import upload_to_b2,file_exists_in_b2,download_from_b2
 app = Flask(__name__)
 CORS(app)
 load_dotenv()
+
+
+raw_audio_cache = LRUCache(maxsize=32)
 
 #separator = Separator('spleeter:2stems','multiprocess:True')
 separator = Separator('spleeter:2stems', multiprocess=False)
@@ -205,6 +209,16 @@ def update_account_usage(current_user,videoUrl,start,end):
     return 'Usage updated'
     
     
+def get_cached_audio(video_id, mp3_path):
+    if video_id in raw_audio_cache:
+        print(f"Using cached audio for {video_id}")
+        return raw_audio_cache[video_id]
+    else:
+        print(f"Caching new audio for {video_id}")
+        audio = AudioSegment.from_file(mp3_path)
+        raw_audio_cache[video_id] = audio
+        return audio
+    
 @app.route("/separate/partial/YT", methods=["POST"])
 @token_required
 def partialSeparateYoutubeAudio(current_user):
@@ -264,7 +278,8 @@ def partialSeparateYoutubeAudio(current_user):
             print('Starting trim of raw audio')
             input_path_trimmed = os.path.join(UPLOAD_DIR, vocal_clip_name)
             
-            audio = AudioSegment.from_file(mp3_path)
+            # audio = AudioSegment.from_file(mp3_path)
+            audio = get_cached_audio(video_id, mp3_path)
             audio_segment = audio[start:end]  
         
             audio_segment.export(input_path_trimmed, format="mp3")

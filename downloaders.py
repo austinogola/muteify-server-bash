@@ -152,6 +152,8 @@ def download_method_one(vidId,sStart=None,sEnd=None,max_retries=3):
     start_time = time.time()
     url = f"https://{method_one_host}/dl"
     
+    print(url)
+    
     try:
         querystring = {"id":vidId}
     
