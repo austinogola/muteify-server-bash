@@ -35,7 +35,7 @@ import multiprocessing
 
 
 app = Flask(__name__)
-CORS(app)
+CORS(app,expose_headers=["FILE-READY"])
 load_dotenv()
 
 DOWNLOAD_BUCKET_NAME = os.getenv("DOWNLOAD_BUCKET_NAME")
