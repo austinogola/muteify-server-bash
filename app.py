@@ -19,7 +19,7 @@ from flask_pymongo import PyMongo
 from flask_bcrypt import Bcrypt
 import jwt
 import wget
-from supabase_utils import (upload_audio_to_supabase,check_file_exists_in_bucket,download_file_from_bucket)
+from storage_utils import upload_to_b2, upload_bytes_to_b2, download_b2_to_local,file_exists_in_b2
 from functools import wraps
 import datetime
 import glob
@@ -31,6 +31,8 @@ import numpy as np
 import tempfile
 from scipy.io.wavfile import write as write_wav
 import ffmpeg
+import multiprocessing
+
 
 app = Flask(__name__)
 CORS(app)
@@ -58,7 +60,11 @@ redis_client = redis.Redis(decode_responses=False)
 
 separator = Separator('spleeter:2stems')
 
+cpu_threads = multiprocessing.cpu_count()
 
+print('threads count',cpu_threads)
+
+# threads=cpu_threads
 
 def token_required(f):
     @wraps(f)
@@ -260,32 +266,61 @@ def separate_endpoint():
     file_name = f"{video_id}.mp3"
     file_path = os.path.join(DOWNLOAD_DIR, file_name)
 
-    if not os.path.exists(file_path):
-        result = major_downloader(video_id)
-        if "file_path" not in result:
-            return jsonify({"error": "Download failed", "detail": result}), 500
-        file_path = result['file_path']
+    # if not os.path.exists(file_path):
+    #     result = major_downloader(video_id)
+    #     if "file_path" not in result:
+    #         return jsonify({"error": "Download failed", "detail": result}), 500
+    #     file_path = result['file_path']
+        
+        
+    if not os.path.exists(file_path) or os.path.getsize(file_path) < 1_000:
+        print("Raw vocal not in local files, Checking B2 for existing MP3...")
+        if not download_b2_to_local(f"raw_mp3/{video_id}.mp3", file_path):
+            print("Not found in B2. Downloading...")
+            result = major_downloader(video_id)
+            if "file_path" not in result:
+                return jsonify({"error": "Download failed", "detail": result}), 500
+            file_path = result['file_path']
+            threading.Thread(target=upload_to_b2, args=(file_path, f"raw_mp3/{video_id}.mp3")).start()
+            
+        else:
+            print("Ws found and Downloaded raw MP3 from B2.")
+            if not os.path.exists(file_path) or os.path.getsize(file_path) < 1_000:
+                print("Still not downloaded form b2 . Using api")
+                result = major_downloader(video_id)
+                if "file_path" not in result:
+                    return jsonify({"error": "Download failed", "detail": result}), 500
 
     # Store raw MP3 to Redis if not cached
     if not redis_client.exists(raw_key):
         with open(file_path, "rb") as f:
-            redis_client.set(raw_key, f.read())
+            # redis_client.set(raw_key, f.read())
+            redis_client.setex(raw_key, 3600, f.read())
 
     def background_full_processing(video_id, file_path):
         try:
             vocal_mp3_bytes = separate_full_vocals(file_path)
-            redis_client.set(f"vocals:{video_id}", vocal_mp3_bytes)
+            # redis_client.set(f"vocals:{video_id}", vocal_mp3_bytes)
+            redis_client.setex(f"vocals:{video_id}", 3600, vocal_mp3_bytes)
+            upload_bytes_to_b2(vocal_mp3_bytes, f"vocals/{video_id}.mp3")
         except Exception as e:
             print(f"Background processing failed: {e}")
 
     # Start background processing
     if not redis_client.exists(vocals_key):
-        threading.Thread(target=background_full_processing, args=(video_id, file_path)).start()
+        local_vocal_path = f"/tmp/{video_id}_vocals.mp3"
+        if os.path.exists(local_vocal_path):
+            redis_client.setex(vocals_key, 3600, open(local_vocal_path, "rb").read())
+        elif download_b2_to_local(f"vocals/{video_id}.mp3", local_vocal_path):
+            redis_client.setex(vocals_key, 3600, open(local_vocal_path, "rb").read())
+        else:
+            threading.Thread(target=background_full_processing, args=(video_id, file_path)).start()
 
     if s_start is not None and s_end is not None:
         # Extract segment from full vocal MP3 (cached or fallback)
         if redis_client.exists(vocals_key):
             full_vocals_mp3 = redis_client.get(vocals_key)
+            redis_client.expire(vocals_key, 3600)
             try:
                 segment_mp3 = extract_segment_from_mp3(full_vocals_mp3, s_start, s_end)
                 response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
@@ -297,7 +332,8 @@ def separate_endpoint():
             # fallback: process segment directly (rarely reached)
             try:
                 vocal_mp3 = separate_full_vocals(file_path)
-                redis_client.set(vocals_key, vocal_mp3)
+                # redis_client.set(vocals_key, vocal_mp3)
+                redis_client.setex(vocals_key, 3600, vocal_mp3)
                 segment_mp3 = extract_segment_from_mp3(vocal_mp3, s_start, s_end)
                 response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
                 response.headers['FILE-READY'] = redis_client.exists(vocals_key)
@@ -312,7 +348,8 @@ def separate_endpoint():
             return response
         else:
             vocal_mp3 = separate_full_vocals(file_path)
-            redis_client.set(vocals_key, vocal_mp3)
+            # redis_client.set(vocals_key, vocal_mp3)
+            redis_client.setex(vocals_key, 3600, vocal_mp3)
             response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
             response.headers['FILE-READY'] = redis_client.exists(vocals_key)
             return response

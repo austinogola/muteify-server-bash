@@ -5,7 +5,9 @@ import os
 from dotenv import load_dotenv
 import time
 import threading
-from b2_helper import upload_to_b2,file_exists_in_b2,download_from_b2
+# from b2_helper import upload_to_b2,file_exists_in_b2,download_from_b2
+
+from storage_utils import upload_to_b2, upload_bytes_to_b2, download_b2_to_local,file_exists_in_b2
 
 load_dotenv()
 
@@ -248,9 +250,9 @@ def major_downloader(vidId, start=None, end=None, max_retries=3):
 
     # Check if valid local file exists
     if os.path.exists(file_path) and os.path.getsize(file_path) > 1_000:  # size sanity check
-        print("File exists locally. Verifying B2 presence...")
-        if not file_exists_in_b2(file_name, DOWNLOAD_BUCKET_NAME):
-            threading.Thread(target=upload_to_b2, args=(file_path, file_name, DOWNLOAD_BUCKET_NAME)).start()
+        print("File exists locally")
+        # if not file_exists_in_b2(f"raw_mp3/{vidId}.mp3"):
+        #     threading.Thread(target=upload_to_b2, args=(file_path, f"raw_mp3/{vidId}.mp3")).start()
         return {'file_path': file_path, 'download_time_seconds': 'immediate'}
 
     # Retry logic
@@ -263,7 +265,7 @@ def major_downloader(vidId, start=None, end=None, max_retries=3):
 
                 if result and 'file_path' in result:
                     print("Download successful. Uploading to B2...")
-                    # threading.Thread(target=upload_to_b2, args=(result['file_path'], file_name, DOWNLOAD_BUCKET_NAME)).start()
+                    threading.Thread(target=upload_to_b2, args=(result['file_path'], file_name, DOWNLOAD_BUCKET_NAME)).start()
                     return result
 
                 print(f"Download attempt {attempt + 1} failed. Retrying...")
