@@ -112,13 +112,20 @@ def the_one_download_method(vidId,sStart=None,sEnd=None,max_retries=3):
             "x-rapidapi-host": method_one_host
         }
         
-        response = requests.get(url, headers=headers, params=querystring)
+        trial = 0
+        download_link=''
+        while(trial<max_retries and len(download_link)<1):
+            print('attemtping to get link',trial)
+            response = requests.get(url, headers=headers, params=querystring)
     
-        response_json = response.json()
+            response_json = response.json()
         
-        print(response_json)
+            print(response_json)
         
-        download_link = response_json["link"]
+            download_link = response_json["link"]
+            
+            trial = trial+1
+            time.sleep(2.5)
         
         file_name =f"{vidId}.mp3"
         
