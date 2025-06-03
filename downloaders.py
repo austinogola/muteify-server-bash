@@ -263,9 +263,9 @@ def major_downloader(vidId, start=None, end=None, max_retries=3):
                 print(f"Trying {method.__name__}, attempt {attempt + 1}")
                 result = method(vidId, start, end) if 'start' in method.__code__.co_varnames else method(vidId)
 
-                if result and 'file_path' in result:
+                if result and 'file_path' in result and os.path.getsize(result['file_path']) > 1_000 :
                     print("Download successful. Uploading to B2...")
-                    threading.Thread(target=upload_to_b2, args=(result['file_path'], file_name, DOWNLOAD_BUCKET_NAME)).start()
+                    threading.Thread(target=upload_to_b2, args=(result['file_path'], f"raw_mp3/{vidId}.mp3")).start()
                     return result
 
                 print(f"Download attempt {attempt + 1} failed. Retrying...")
