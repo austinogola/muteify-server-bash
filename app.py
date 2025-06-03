@@ -259,6 +259,25 @@ def resolve_segment_range(s_start, s_end, duration):
     return start, end
 
 
+@app.route('/get-duration', methods=['POST'])
+def get_duration():
+    data = request.get_json()
+    video_id = data.get("video_id")
+    
+    if not video_id:
+        return jsonify({"error": "Missing video_id"}), 400
+    
+    vocals_key = f"vocals:{video_id}"
+    
+    if redis_client.exists(vocals_key):
+         audio = AudioSegment.from_file(BytesIO(redis_client.get(vocals_key)), format="mp3")
+         duration = len(audio) / 1000
+         
+         return jsonify({"duration":duration})
+    else:
+        return jsonify({"error": "Missing "}), 400
+    
+
 @app.route('/separate', methods=['POST'])
 def separate_endpoint():
     data = request.get_json()
