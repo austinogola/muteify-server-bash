@@ -1,5 +1,5 @@
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, make_response
 import os
 import redis
 import base64
@@ -172,7 +172,12 @@ def separate_full_vocals(mp3_input) -> bytes:
 
     # Convert to MP3 using ffmpeg
     temp_mp3_out = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    ffmpeg.input(temp_wav.name).output(temp_mp3_out.name, audio_bitrate='128k').run(quiet=True, overwrite_output=True)
+    # ffmpeg.input(temp_wav.name).output(temp_mp3_out.name, audio_bitrate='128k').run(quiet=True, overwrite_output=True)
+    ffmpeg.input(temp_wav.name).output(
+        temp_mp3_out.name,
+        audio_bitrate='128k',
+        threads=0 
+    ).run(quiet=True, overwrite_output=True)
 
     # Read MP3 bytes
     with open(temp_mp3_out.name, "rb") as f:
@@ -197,7 +202,12 @@ def extract_segment_from_mp3(mp3_bytes: bytes, start: float, end: float) -> byte
     input_temp.close()
 
     segment_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    ffmpeg.input(input_temp.name, ss=start, to=end).output(segment_temp.name, audio_bitrate='128k').run(quiet=True, overwrite_output=True)
+    # ffmpeg.input(input_temp.name, ss=start, to=end).output(segment_temp.name, audio_bitrate='128k').run(quiet=True, overwrite_output=True)
+    ffmpeg.input(input_temp.name, ss=start, to=end).output(
+        segment_temp.name,
+        audio_bitrate='128k',
+        threads=0  # Or use threads=0
+    ).run(quiet=True, overwrite_output=True)
 
     with open(segment_temp.name, "rb") as f:
         segment_mp3_bytes = f.read()
@@ -278,7 +288,9 @@ def separate_endpoint():
             full_vocals_mp3 = redis_client.get(vocals_key)
             try:
                 segment_mp3 = extract_segment_from_mp3(full_vocals_mp3, s_start, s_end)
-                return send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3")
+                response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
+                response.headers['FILE-READY'] = redis_client.exists(vocals_key)
+                return response
             except Exception as e:
                 return jsonify({"error": "Segment processing failed", "detail": str(e)}), 500
         else:
@@ -287,17 +299,23 @@ def separate_endpoint():
                 vocal_mp3 = separate_full_vocals(file_path)
                 redis_client.set(vocals_key, vocal_mp3)
                 segment_mp3 = extract_segment_from_mp3(vocal_mp3, s_start, s_end)
-                return send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3")
+                response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
+                response.headers['FILE-READY'] = redis_client.exists(vocals_key)
+                return response
             except Exception as e:
                 return jsonify({"error": "Segment processing failed", "detail": str(e)}), 500
     else:
         # Full vocal requested
         if redis_client.exists(vocals_key):
-            return send_file(BytesIO(redis_client.get(vocals_key)), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3")
+            response = make_response(send_file(BytesIO(redis_client.get(vocals_key)), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+            response.headers['FILE-READY'] = redis_client.exists(vocals_key)
+            return response
         else:
             vocal_mp3 = separate_full_vocals(file_path)
             redis_client.set(vocals_key, vocal_mp3)
-            return send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3")
+            response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+            response.headers['FILE-READY'] = redis_client.exists(vocals_key)
+            return response
 
 
 
