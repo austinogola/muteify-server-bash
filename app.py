@@ -334,7 +334,13 @@ def separate_endpoint():
             redis_client.expire(vocals_key, 3600)  # Refresh TTL
             try:
                 #trim only the segment we need and send
-                start,end = resolve_segment_range(s_start,s_end)
+             
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_in:
+                    temp_in.write(full_vocals_mp3)
+                    temp_in.flush()
+                    duration = float(ffmpeg.probe(temp_in.name)['format']['duration'])
+                    
+                start,end = resolve_segment_range(s_start,s_end,duration)
                 segment_mp3 = extract_segment_from_mp3(full_vocals_mp3, start,end)
                 response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
                 response.headers['FILE-READY'] = redis_client.exists(vocals_key)
@@ -344,7 +350,9 @@ def separate_endpoint():
         else:
             print('WHOLE VOCAL NOT IN REDIS, ONLY PROCESSING SECTION FROM RAW FILE')
             #if full vocals not it redis , split raw mp3 and process the vocals for that segment only
-            start,end = resolve_segment_range(s_start,s_end)
+            audio = AudioSegment.from_file(BytesIO(file_path), format="mp3")
+            duration = len(audio) / 1000
+            start,end = resolve_segment_range(s_start,s_end,duration)
             segment_mp3 = separate_segment(file_path, start, end)
             response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
             response.headers['FILE-READY'] = redis_client.exists(vocals_key)
