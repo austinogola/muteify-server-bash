@@ -350,7 +350,7 @@ def separate_endpoint():
         else:
             print('WHOLE VOCAL NOT IN REDIS, ONLY PROCESSING SECTION FROM RAW FILE')
             #if full vocals not it redis , split raw mp3 and process the vocals for that segment only
-            audio = AudioSegment.from_file(BytesIO(file_path), format="mp3")
+            audio = AudioSegment.from_file(file_path, format="mp3")
             duration = len(audio) / 1000
             start,end = resolve_segment_range(s_start,s_end,duration)
             segment_mp3 = separate_segment(file_path, start, end)
