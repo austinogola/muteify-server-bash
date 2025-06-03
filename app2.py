@@ -283,6 +283,69 @@ def partialSeparateYoutubeAudio(current_user):
         thread.start()
     return response
 
+
+@app.route('/separateBack', methods=['POST'])
+def separate_endpoint():
+    data = request.get_json()
+    video_id = data.get("video_id")
+    s_start = data.get("start")
+    s_end = data.get("end")
+
+    if not video_id:
+        return jsonify({"error": "Missing video_id"}), 400
+
+    # Check if processed vocals already exist in Redis
+    vocals_key = f"vocals:{video_id}"
+    if redis_client.exists(vocals_key):
+        print("Returning cached full vocals.")
+        return send_file(BytesIO(redis_client.get(vocals_key)), mimetype='audio/wav', as_attachment=True, download_name=f"{video_id}_vocals.wav")
+
+    # Ensure raw mp3 is available
+    file_name = f"{video_id}.mp3"
+    file_path = os.path.join(DOWNLOAD_DIR, file_name)
+
+    if not os.path.exists(file_path):
+        print("Not found locally. Downloading...")
+        result = major_downloader(video_id)
+        if "file_path" not in result:
+            return jsonify({"error": "Download failed", "detail": result}), 500
+        file_path = result['file_path']
+
+    # Read and cache raw MP3 into Redis memory if not already cached
+    raw_key = f"raw:{video_id}"
+    if not redis_client.exists(raw_key):
+        with open(file_path, "rb") as f:
+            redis_client.set(raw_key, f.read())
+        print("Raw MP3 stored in Redis.")
+
+    def background_full_processing(video_id, file_path):
+        print("Background: Full vocal processing starting...")
+        try:
+            vocal_bytes = separate_full_vocals(file_path)
+            redis_client.set(f"vocals:{video_id}", vocal_bytes)
+            print("Background: Full vocal processing complete.")
+        except Exception as e:
+            print(f"Background processing failed for {video_id}: {e}")
+
+    # Start background full processing thread
+    threading.Thread(target=background_full_processing, args=(video_id, file_path)).start()
+
+    if s_start is not None and s_end is not None:
+        try:
+            clip_bytes = separate_segment(file_path, s_start, s_end)
+            print(f"Returning segment [{s_start}-{s_end}]")
+            return send_file(BytesIO(clip_bytes), mimetype='audio/wav', as_attachment=True, download_name=f"{video_id}_segment.wav")
+        except Exception as e:
+            return jsonify({"error": "Segment processing failed", "detail": str(e)}), 500
+    else:
+        # If no segment requested, wait until full processing is done (could improve with polling later)
+        print("No segment given, processing full audio and returning...")
+        vocal_bytes = separate_full_vocals(file_path)
+        redis_client.set(vocals_key, vocal_bytes)
+        return send_file(BytesIO(vocal_bytes), mimetype='audio/wav', as_attachment=True, download_name=f"{video_id}_vocals.wav")
+
+
+
 @app.route('/get_duration/<video_id>', methods=['GET'])
 def get_audio_duration(video_id):
     try:
