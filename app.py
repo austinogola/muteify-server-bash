@@ -1,6 +1,9 @@
 
 from flask import Flask, request, jsonify, send_file
 import os
+import redis
+import base64
+import threading
 from io import BytesIO
 import requests
 from pydub import AudioSegment
@@ -17,146 +20,43 @@ import jwt
 import wget
 from supabase_utils import (upload_audio_to_supabase,check_file_exists_in_bucket,download_file_from_bucket)
 from functools import wraps
-import threading
 import datetime
 import glob
 import numpy as np
 from pydub.utils import mediainfo
 from downloaders import (major_downloader)
 from b2_helper import upload_to_b2,file_exists_in_b2,download_from_b2
+import numpy as np
+import tempfile
+from scipy.io.wavfile import write as write_wav
+import ffmpeg
 
 app = Flask(__name__)
 CORS(app)
 load_dotenv()
 
+DOWNLOAD_BUCKET_NAME = os.getenv("DOWNLOAD_BUCKET_NAME")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 
-raw_audio_cache = LRUCache(maxsize=32)
+SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key")
 
-#separator = Separator('spleeter:2stems','multiprocess:True')
-separator = Separator('spleeter:2stems', multiprocess=False)
-
-dummy_waveform = np.zeros((220500, 2), dtype=np.float32)
-separator.separate(dummy_waveform)
-print("SEPARATOR",separator)
-# UPLOAD_FOLDER = 'uploads'
-# OUTPUT_FOLDER = 'separated'
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "outputs"
 DOWNLOAD_DIR = 'downloads'
+
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-
-# os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-# os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-
-
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
-RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
-DOWNLOAD_RAPIDAPI_HOST=os.getenv("DOWNLOAD_RAPIDAPI_HOST")
-MP3_DOWNLOADER_HOST=os.getenv("MP3_DOWNLOADER_HOST")
-NEW_DOWN = os.getenv("NEW_DOWN")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_PUBLIC_KEY = os.getenv("SUPABASE_PUBLIC_KEY")
-BUCKET_NAME = "mutify-vocals-audios"
-
-MP3_DOWN = os.getenv("MP3_DOWN")
 app.config["MONGO_URI"] = os.getenv("MONGO_DB_URL")
 mongo = PyMongo(app)
 bcrypt = Bcrypt(app)
-SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key")
-
-AUDIO_FOLDER = 'youtube-mp3-downloads'
-VOCALS_FOLDER = 'audio-vocals'
 
 
+redis_client = redis.Redis(decode_responses=False)
 
+separator = Separator('spleeter:2stems')
 
-
-@app.route('/download', methods=['POST'])
-
-def download():
-    data = request.json
-    videoUrl = data.get("videoUrl")
-
-    
-
-    if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
-        video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
-    else:
-        return jsonify({"error": "Invalid YouTube URL or ID"}), 400
-    
-    
-    mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-        
-    if os.path.exists(mp3_path):
-        print('YT MP3 ALREADY EXISTS')
-        mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-    else:
-        print('YT MP3 DOES NOT ALREADY EXISTS, DOWNLOADING MP3')
-        #audio_info = download_mp3(video_id)
-
-        audio_info = major_downloader(video_id)
-        if (not audio_info["file_path"])or not  os.path.exists(audio_info["file_path"]):
-                print("download path doesn't exists")
-                return jsonify({"error": "MP3 download failed"}), 500
-
-        mp3_path = audio_info["file_path"]
-        
-        
-    return jsonify({"message":'downloaded'}),200
-
-@app.route('/separate', methods=['POST'])
-def separate():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part in the request'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
-    filename = secure_filename(file.filename)
-    base_name = os.path.splitext(filename)[0]
-    input_path = os.path.join(UPLOAD_FOLDER, filename)
-    output_dir = os.path.join(OUTPUT_FOLDER, base_name)
-    vocals_path = os.path.join(output_dir, 'vocals.mp3')
-    start = time.time()
-    # Save the uploaded file
-    file.save(input_path)
-
-    try:
-        # Separate
-        separator.separate_to_file(input_path, OUTPUT_FOLDER,codec="mp3", bitrate="128k")
-        os.remove(input_path)
-        end = time.time()
-
-        print('FINISHED IN ',end-start)
-
-        if not os.path.exists(vocals_path):
-            return jsonify({'error': 'Vocals file not found after separation'}), 500
-
-        # Return the vocals audio file
-        return send_file(vocals_path, mimetype='audio/mpeg', as_attachment=True)
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-DOWNLOAD_BUCKET_NAME = os.getenv("DOWNLOAD_BUCKET_NAME")
-@app.route("/download/<video_url>", methods=["GET"])
-def downloadVid(video_url):
-    # data = request.json
-    videoUrl = video_url
-    
-    if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
-        video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
-        major_downloader(video_id)
-    else:
-        return jsonify({"error": "Invalid YouTube URL or ID"}), 400
-
-    return jsonify({"error":False})
 
 
 def token_required(f):
@@ -180,161 +80,160 @@ def token_required(f):
     return decorated
 
 
+def download_audio(video_id):
+    result =  major_downloader(video_id)
+    return result
 
-def update_account_usage(current_user,videoUrl,start,end):
-    users = mongo.db.users
-    accounts = mongo.db.accounts
+@app.route('/download', methods=['POST'])
+def download_endpoint():
+    data = request.get_json()
+    video_ids = data.get("video_ids")
+
+    if not video_ids or not isinstance(video_ids, list):
+        return jsonify({"error": "Missing or invalid video_ids"}), 400
+
+    results = []
+
+    for video_id in video_ids:
+        try:
+            result = major_downloader(video_id)
+            results.append({
+                "video_id": video_id,
+                "status": "success" if 'file_path' in result else "failed",
+                "detail": result
+            })
+        except Exception as e:
+            results.append({
+                "video_id": video_id,
+                "status": "error",
+                "detail": str(e)
+            })
+
+    return jsonify(results), 200
+
+
+
+def separate_full_vocals(mp3_input) -> bytes:
+    """Run full Spleeter separation and return vocal stem as wav bytes."""
     
-    user = users.find_one({"email": current_user})
-    account = accounts.find_one({"userId": str(user["_id"])})
-    
-    usage_records = account.get("usage", [])
-    
-    requested_duration_seconds = (end - start) / 1000.0
-    requested_duration_minutes = requested_duration_seconds / 60.0
-    
-    today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
-    
-    new_usage = {
-        "date": today_date,
-        "videoUrl":videoUrl,
-        "minutes": requested_duration_minutes,  # example field
-    }
-    
-    accounts.update_one(
-        {"userId": str(user["_id"])},
-        {"$push": {"usage": new_usage}}
-    )
-    
-    return 'Usage updated'
-    
-    
-def get_cached_audio(video_id, mp3_path):
-    if video_id in raw_audio_cache:
-        print(f"Using cached audio for {video_id}")
-        return raw_audio_cache[video_id]
+    # Save input (bytes or path) to a temp file
+    if isinstance(mp3_input, bytes):
+        temp_mp3 = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        temp_mp3.write(mp3_input)
+        temp_mp3.close()
+        mp3_path = temp_mp3.name
     else:
-        print(f"Caching new audio for {video_id}")
-        audio = AudioSegment.from_file(mp3_path)
-        raw_audio_cache[video_id] = audio
-        return audio
+        mp3_path = mp3_input
+
+    # Run Spleeter to separate vocals
+    waveform_dict = separator.separate_to_audio_adapter().load(mp3_path, sample_rate=44100)
+    prediction = separator.separate(waveform_dict)
+
+    vocals = prediction['vocals']
     
-@app.route("/separate/partial/YT", methods=["POST"])
-@token_required
-def partialSeparateYoutubeAudio(current_user):
-  
-    data = request.json
-    videoUrl = data.get("videoUrl")
-    start=data.get("start","0")
-    end=data.get("end","10000")
+    # Convert vocals to WAV in memory
+    temp_wav = BytesIO()
+    write_wav(temp_wav, 44100, vocals)
+    temp_wav.seek(0)
+
+    # Clean up temp file if created
+    if isinstance(mp3_input, bytes):
+        os.unlink(mp3_path)
+
+    return temp_wav.read()
 
 
-    if "youtube.com" in videoUrl or "youtu.be" in videoUrl:
-        video_id = videoUrl.split("v=")[-1] if "v=" in videoUrl else videoUrl.split("/")[-1]
+
+
+def separate_segment(mp3_input, start: float, end: float) -> bytes:
+    """Extract segment from MP3, run Spleeter on it, return vocal stem bytes."""
+    
+    # Save input to temp if needed
+    if isinstance(mp3_input, bytes):
+        input_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        input_file.write(mp3_input)
+        input_file.close()
+        mp3_path = input_file.name
     else:
-        return jsonify({"error": "Invalid YouTube URL or ID"}), 400
+        mp3_path = mp3_input
 
+    # Output temp segment file
+    segment_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
 
-    start_time = time.time()
-    
-    mp3_name = f"{video_id}.mp3" 
-    mp3_path = os.path.join(DOWNLOAD_DIR, mp3_name)
-    
-    
-    vocal_clip_name = f"{video_id}_{start/1000}_{end/1000}.mp3"
-    vocal_clip_path = os.path.join(OUTPUT_DIR, vocal_clip_name)
-    
-    #boolean file exists in global cache
-    vocal_file_exists_in_storage = file_exists_in_b2(vocal_clip_name,DOWNLOAD_BUCKET_NAME)
-    mp3_file_exists_storage = file_exists_in_b2(mp3_name,DOWNLOAD_BUCKET_NAME)
-    
-    #if file exists locally
-    if(os.path.exists(vocal_clip_path)):
-        print("voice exists locally, sending file")
-        response = send_file(vocal_clip_path, mimetype="audio/mpeg", as_attachment=True, download_name=vocal_clip_name)  
-    else:
-        print("voice clip doesn't exist LOCALLY, checking global cache")
-        if vocal_file_exists_in_storage:
-            print('voice clip exists in global cache, downloading')
-            download_result = download_from_b2(vocal_clip_name, DOWNLOAD_BUCKET_NAME, vocal_clip_path,start_time)
-            response = send_file(vocal_clip_path, mimetype="audio/mpeg", as_attachment=True, download_name=vocal_clip_name)
-        else:
-            print("voice clip doesn't exist in GLOBAL cache too, processing") 
-            
-            if not os.path.exists(mp3_path):
-                print('YT MP3 DOES NOT EXIST LOCALLY')
-                
-                if(mp3_file_exists_storage):
-                    print('YT MP3 EXISTS IN GLOBAL, PULLING')
-                    download_result = download_from_b2(mp3_name, DOWNLOAD_BUCKET_NAME, mp3_path,start_time)
-                else:
-                    print('YT MP3 DOES NOT EXIST IN GLOBAL EITHER, DOWNLOADING')
-                    mp3_audio_info = major_downloader(video_id)
-                    if (mp3_audio_info.get('file_path') is None) or not  os.path.exists(mp3_audio_info.get('file_path')):
-                        print("MP3 FILE STILL NOT DOWNLOADED, RETURNING ERROR")
-                        return jsonify({"error": "MP3 download failed"}), 500
-
-            # mp3_clip_name = f"{video_id}_{start/1000}_{end/1000}."
-            print('Starting trim of raw audio')
-            input_path_trimmed = os.path.join(UPLOAD_DIR, vocal_clip_name)
-            
-            # audio = AudioSegment.from_file(mp3_path)
-            audio = get_cached_audio(video_id, mp3_path)
-            audio_segment = audio[start:end]  
-        
-            audio_segment.export(input_path_trimmed, format="mp3")
-     
-            
-            output_path = os.path.join(OUTPUT_DIR, f"{video_id}_{start/1000}_{end/1000}")
-
-            # Separate trimmed audio
-            print('SEPARATING STARTING')
-            separator.separate_to_file(input_path_trimmed, OUTPUT_DIR,codec="mp3", bitrate="128k")
-    
-            vocal_path = os.path.join(output_path, "vocals.mp3")
-            new_vocal_path = vocal_clip_path
-            if not os.path.exists(vocal_path):
-                print('PATH DOES NOT EXIST')
-                return jsonify({"error": "Vocal separation failed"}), 500
-        
-            os.rename(vocal_path, new_vocal_path)
-
-            response = send_file(new_vocal_path, mimetype="audio/mpeg", as_attachment=True, download_name=vocal_clip_name)
-            
-    update_account_usage(current_user,videoUrl,start,end)
-    if(not vocal_file_exists_in_storage):
-        thread = threading.Thread(target=upload_to_b2, args=( vocal_clip_path,vocal_clip_name, os.getenv("DOWNLOAD_BUCKET_NAME")))
-        thread.start()
-    return response
-
-@app.route('/get_duration/<video_id>', methods=['GET'])
-def get_audio_duration(video_id):
     try:
-        # Look for a matching audio file with common extensions
-        #file_name =f"{url}.mp3"
-        #file_path = os.path.join(DOWNLOAD_DIR, file_name)
-        
-        mp3_name = f"{video_id}.mp3" 
-        mp3_path = os.path.join(DOWNLOAD_DIR, mp3_name)
-        
-        audio_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3"))
-        if not audio_files:
-            return jsonify({"error": "File not found"}), 404
+        # Extract audio segment using ffmpeg
+        ffmpeg.input(mp3_path, ss=start, to=end).output(segment_path).run(quiet=True, overwrite_output=True)
+        return separate_full_vocals(segment_path)
+    finally:
+        # Clean up
+        if os.path.exists(segment_path):
+            os.remove(segment_path)
+        if isinstance(mp3_input, bytes) and os.path.exists(mp3_path):
+            os.remove(mp3_path)
 
-        audio_file = audio_files[0]
 
-        # Get duration using pydub/mediainfo (uses ffprobe)
-        info = mediainfo(audio_file)
-        duration = float(info['duration'])
 
-        return jsonify({
-            "video_id": video_id,
-            "duration_seconds": duration
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route('/separate', methods=['POST'])
+def separate_endpoint():
+    data = request.get_json()
+    video_id = data.get("video_id")
+    s_start = data.get("start")
+    s_end = data.get("end")
 
+    if not video_id:
+        return jsonify({"error": "Missing video_id"}), 400
+
+    # Check if processed vocals already exist in Redis
+    vocals_key = f"vocals:{video_id}"
+    if redis_client.exists(vocals_key):
+        print("Returning cached full vocals.")
+        return send_file(BytesIO(redis_client.get(vocals_key)), mimetype='audio/wav', as_attachment=True, download_name=f"{video_id}_vocals.wav")
+
+    # Ensure raw mp3 is available
+    file_name = f"{video_id}.mp3"
+    file_path = os.path.join(DOWNLOAD_DIR, file_name)
+
+    if not os.path.exists(file_path):
+        print("Not found locally. Downloading...")
+        result = major_downloader(video_id)
+        if "file_path" not in result:
+            return jsonify({"error": "Download failed", "detail": result}), 500
+        file_path = result['file_path']
+
+    # Read and cache raw MP3 into Redis memory if not already cached
+    raw_key = f"raw:{video_id}"
+    if not redis_client.exists(raw_key):
+        with open(file_path, "rb") as f:
+            redis_client.set(raw_key, f.read())
+        print("Raw MP3 stored in Redis.")
+
+    def background_full_processing(video_id, file_path):
+        print("Background: Full vocal processing starting...")
+        try:
+            vocal_bytes = separate_full_vocals(file_path)
+            redis_client.set(f"vocals:{video_id}", vocal_bytes)
+            print("Background: Full vocal processing complete.")
+        except Exception as e:
+            print(f"Background processing failed for {video_id}: {e}")
+
+    # Start background full processing thread
+    threading.Thread(target=background_full_processing, args=(video_id, file_path)).start()
+
+    if s_start is not None and s_end is not None:
+        try:
+            clip_bytes = separate_segment(file_path, s_start, s_end)
+            print(f"Returning segment [{s_start}-{s_end}]")
+            return send_file(BytesIO(clip_bytes), mimetype='audio/wav', as_attachment=True, download_name=f"{video_id}_segment.wav")
+        except Exception as e:
+            return jsonify({"error": "Segment processing failed", "detail": str(e)}), 500
+    else:
+        # If no segment requested, wait until full processing is done (could improve with polling later)
+        print("No segment given, processing full audio and returning...")
+        vocal_bytes = separate_full_vocals(file_path)
+        redis_client.set(vocals_key, vocal_bytes)
+        return send_file(BytesIO(vocal_bytes), mimetype='audio/wav', as_attachment=True, download_name=f"{video_id}_vocals.wav")
 
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
