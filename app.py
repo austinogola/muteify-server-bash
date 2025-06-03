@@ -26,7 +26,7 @@ import glob
 import numpy as np
 from pydub.utils import mediainfo
 from downloaders import (major_downloader)
-from b2_helper import upload_to_b2,file_exists_in_b2,download_from_b2
+# from b2_helper import upload_to_b2,file_exists_in_b2,download_from_b2
 import numpy as np
 import tempfile
 from scipy.io.wavfile import write as write_wav
@@ -178,10 +178,10 @@ def separate_full_vocals(mp3_input) -> bytes:
 
     # Convert to MP3 using ffmpeg
     temp_mp3_out = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    # ffmpeg.input(temp_wav.name).output(temp_mp3_out.name, audio_bitrate='128k').run(quiet=True, overwrite_output=True)
+    # ffmpeg.input(temp_wav.name).output(temp_mp3_out.name, audio_bitrate='192k').run(quiet=True, overwrite_output=True)
     ffmpeg.input(temp_wav.name).output(
         temp_mp3_out.name,
-        audio_bitrate='128k',
+        audio_bitrate='192k',
         threads=0 
     ).run(quiet=True, overwrite_output=True)
 
@@ -208,10 +208,10 @@ def extract_segment_from_mp3(mp3_bytes: bytes, start: float, end: float) -> byte
     input_temp.close()
 
     segment_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    # ffmpeg.input(input_temp.name, ss=start, to=end).output(segment_temp.name, audio_bitrate='128k').run(quiet=True, overwrite_output=True)
+    # ffmpeg.input(input_temp.name, ss=start, to=end).output(segment_temp.name, audio_bitrate='192k').run(quiet=True, overwrite_output=True)
     ffmpeg.input(input_temp.name, ss=start, to=end).output(
         segment_temp.name,
-        audio_bitrate='128k',
+        audio_bitrate='192k',
         threads=0  # Or use threads=0
     ).run(quiet=True, overwrite_output=True)
 
