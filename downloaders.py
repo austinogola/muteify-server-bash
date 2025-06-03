@@ -88,6 +88,103 @@ def download_method_one(vidId,sStart=None,sEnd=None,max_retries=3):
             "message":repr(e)
         })
 
+
+def the_one_download_method(vidId,sStart=None,sEnd=None,max_retries=3):
+   
+    start_time = time.time()
+    url = f"https://{method_one_host}/dl"
+    
+    print(url)
+    
+    try:
+        querystring = {"id":vidId}
+    
+        if sStart is not None:
+            querystring["sStart"]=sStart
+            
+        if sEnd is not None:
+            querystring["sEnd"]=sEnd
+            
+        print(querystring)
+
+        headers = {
+            "x-rapidapi-key": RAPIDAPI_KEY,
+            "x-rapidapi-host": method_one_host
+        }
+        
+        response = requests.get(url, headers=headers, params=querystring)
+    
+        response_json = response.json()
+        
+        print(response_json)
+        
+        download_link = response_json["link"]
+        
+        file_name =f"{vidId}.mp3"
+        
+        file_path = os.path.join(DOWNLOAD_DIR, file_name)
+    
+        
+        mp3_response = requests.get(download_link)
+        
+        print(mp3_response)
+    
+        
+        mp3_response.raise_for_status()  # Ensure the download was successful
+        
+        with open(file_path, 'wb') as file:
+           for chunk in mp3_response.iter_content(chunk_size=1048576):
+               if chunk:
+                   file.write(chunk)
+                    
+                    
+        download_time = time.time() - start_time
+
+        # Return the file path and download time
+        #return file_name, download_time
+        print('Downloadded in',download_time)
+        return ({
+            'file_path': file_path,
+            'download_time_seconds': download_time
+        })
+    except Exception as e:
+        return({
+            "error":True,
+            "message":repr(e),
+            'download_link':download_link
+        })
+
+def major_downloader(vidId, start=None, end=None, max_retries=3):
+    file_name = f"{vidId}.mp3"
+    file_path = os.path.join(DOWNLOAD_DIR, file_name)
+
+    # Check if valid local file exists
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 1_000:  # size sanity check
+        print("File exists locally")
+        # if not file_exists_in_b2(f"raw_mp3/{vidId}.mp3"):
+        #     threading.Thread(target=upload_to_b2, args=(file_path, f"raw_mp3/{vidId}.mp3")).start()
+        return {'file_path': file_path, 'download_time_seconds': 'immediate'}
+    
+    
+    methods = [the_one_download_method]
+    for method in methods:
+        for attempt in range(max_retries):
+            try:
+                print(f"Trying {method.__name__}, attempt {attempt + 1}")
+                result = method(vidId, start, end) if 'start' in method.__code__.co_varnames else method(vidId)
+
+                if result and 'file_path' in result and os.path.getsize(result['file_path']) > 1_000 :
+                    print("Download successful. Uploading to B2...")
+                    threading.Thread(target=upload_to_b2, args=(result['file_path'], f"raw_mp3/{vidId}.mp3")).start()
+                    return result
+
+                print(f"Download attempt {attempt + 1} failed. Retrying...")
+                time.sleep(2.5)
+            except Exception as e:
+                print(f"Error in {method.__name__}: {e}")
+                time.sleep(2.5)
+
+    return {"error": True, "message": f"All methods failed for video ID: {vidId}","download_link":result['download_link']}
    
     
 def download_method_three(vidId):
@@ -244,7 +341,7 @@ def download_method_two(vidId):
         })
 
 DOWNLOAD_BUCKET_NAME = os.getenv("DOWNLOAD_BUCKET_NAME")
-def major_downloader(vidId, start=None, end=None, max_retries=3):
+def major_downloader2(vidId, start=None, end=None, max_retries=3):
     file_name = f"{vidId}.mp3"
     file_path = os.path.join(DOWNLOAD_DIR, file_name)
 
