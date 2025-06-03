@@ -104,15 +104,14 @@ def download_endpoint():
     for video_id in video_ids:
         try:
             result = major_downloader(video_id)
-            results.append({
-                "video_id": video_id,
-                "status": "success" if 'file_path' in result else "failed",
-                "detail": result
-            })
+            result["video_id"]= video_id
+            results.append(result)
         except Exception as e:
             results.append({
                 "video_id": video_id,
                 "status": "error",
+                "error":True,
+                "success":False,
                 "detail": str(e)
             })
 

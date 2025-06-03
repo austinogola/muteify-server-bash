@@ -170,7 +170,7 @@ def major_downloader(vidId, start=None, end=None, max_retries=3):
         print("File exists locally")
         # if not file_exists_in_b2(f"raw_mp3/{vidId}.mp3"):
         #     threading.Thread(target=upload_to_b2, args=(file_path, f"raw_mp3/{vidId}.mp3")).start()
-        return {'file_path': file_path, 'download_time_seconds': 'immediate'}
+        return {'file_path': file_path, 'download_time_seconds': 'immediate',"error":False,"success":True}
     
     
     methods = [the_one_download_method]
@@ -183,7 +183,8 @@ def major_downloader(vidId, start=None, end=None, max_retries=3):
                 if result and 'file_path' in result and os.path.getsize(result['file_path']) > 1_000 :
                     print("Download successful. Uploading to B2...")
                     threading.Thread(target=upload_to_b2, args=(result['file_path'], f"raw_mp3/{vidId}.mp3")).start()
-                    return result
+                    # return result
+                    return {'file_path': result['file_path'], 'download_time_seconds': result['download_time_seconds'],"error":False,"success":True}
 
                 print(f"Download attempt {attempt + 1} failed. Retrying...")
                 time.sleep(2.5)
@@ -191,7 +192,7 @@ def major_downloader(vidId, start=None, end=None, max_retries=3):
                 print(f"Error in {method.__name__}: {e}")
                 time.sleep(2.5)
 
-    return {"error": True, "message": f"All methods failed for video ID: {vidId}","download_link":result['download_link']}
+    return {"error": True,"success":False,"download_link":result['download_link']}
    
     
 def download_method_three(vidId):
