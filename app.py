@@ -250,6 +250,15 @@ def separate_segment(mp3_input, start: float, end: float) -> bytes:
             os.remove(mp3_path)
 
 
+def should_extract_segment(s_start, s_end):
+    return s_start is not None or s_end is not None
+
+def resolve_segment_range(s_start, s_end, duration):
+    start = float(s_start) if s_start is not None else 0
+    end = float(s_end) if s_end is not None else duration
+    return start, end
+
+
 @app.route('/separate', methods=['POST'])
 def separate_endpoint():
     data = request.get_json()
@@ -314,44 +323,70 @@ def separate_endpoint():
             redis_client.setex(vocals_key, 3600, open(local_vocal_path, "rb").read())
         else:
             threading.Thread(target=background_full_processing, args=(video_id, file_path)).start()
-
-    if s_start is not None and s_end is not None:
-        # Extract segment from full vocal MP3 (cached or fallback)
+            
+            
+    if should_extract_segment(s_start, s_end):
+        print("ONLY SECTION REQUESTED")
+        #if full vocal exists in redis
         if redis_client.exists(vocals_key):
+            print('WHOLE VOCAL IN REDIS, ONLY TRIMMING')
             full_vocals_mp3 = redis_client.get(vocals_key)
-            redis_client.expire(vocals_key, 3600)
+            redis_client.expire(vocals_key, 3600)  # Refresh TTL
             try:
-                segment_mp3 = extract_segment_from_mp3(full_vocals_mp3, s_start, s_end)
+                #trim only the segment we need and send
+                start,end = resolve_segment_range(s_start,s_end)
+                segment_mp3 = extract_segment_from_mp3(full_vocals_mp3, start,end)
                 response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
                 response.headers['FILE-READY'] = redis_client.exists(vocals_key)
                 return response
             except Exception as e:
                 return jsonify({"error": "Segment processing failed", "detail": str(e)}), 500
         else:
-            # fallback: process segment directly (rarely reached)
-            try:
-                vocal_mp3 = separate_full_vocals(file_path)
-                # redis_client.set(vocals_key, vocal_mp3)
-                redis_client.setex(vocals_key, 3600, vocal_mp3)
-                segment_mp3 = extract_segment_from_mp3(vocal_mp3, s_start, s_end)
-                response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
-                response.headers['FILE-READY'] = redis_client.exists(vocals_key)
-                return response
-            except Exception as e:
-                return jsonify({"error": "Segment processing failed", "detail": str(e)}), 500
+            print('WHOLE VOCAL NOT IN REDIS, ONLY PROCESSING SECTION FROM RAW FILE')
+            #if full vocals not it redis , split raw mp3 and process the vocals for that segment only
+            start,end = resolve_segment_range(s_start,s_end)
+            segment_mp3 = separate_segment(file_path, start, end)
+            response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
+            response.headers['FILE-READY'] = redis_client.exists(vocals_key)
+            return response
+            
+            # full_vocals_mp3 = separate_full_vocals(file_path)
+            # redis_client.setex(vocals_key, 3600, full_vocals_mp3)
+
+        # try:
+        #     # Determine clip range
+        #     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_in:
+        #         temp_in.write(full_vocals_mp3)
+        #         temp_in.flush()
+        #         duration = float(ffmpeg.probe(temp_in.name)['format']['duration'])
+
+        #     start, end = resolve_segment_range(s_start, s_end, duration)
+        #     segment_mp3 = extract_segment_from_mp3(full_vocals_mp3, start, end)
+
+        #     response = make_response(send_file(BytesIO(segment_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_segment.mp3"))
+        #     response.headers['FILE-READY'] = 1
+        #     return response
+        # except Exception as e:
+        #     return jsonify({"error": "Segment processing failed", "detail": str(e)}), 500
+
     else:
         # Full vocal requested
+        print("WHOLE VOCAL REQUESTED")
         if redis_client.exists(vocals_key):
-            response = make_response(send_file(BytesIO(redis_client.get(vocals_key)), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
-            response.headers['FILE-READY'] = redis_client.exists(vocals_key)
-            return response
+            print("WHOLE VOCAL EXISTS IN REDIS")
+            redis_client.expire(vocals_key, 3600)
+            vocal_mp3 = redis_client.get(vocals_key)
         else:
+            print("WHOLE VOCAL DOES NOT EXISTS IN REDIS, SEPARATING")
             vocal_mp3 = separate_full_vocals(file_path)
-            # redis_client.set(vocals_key, vocal_mp3)
             redis_client.setex(vocals_key, 3600, vocal_mp3)
-            response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
-            response.headers['FILE-READY'] = redis_client.exists(vocals_key)
-            return response
+
+        response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+        response.headers['FILE-READY'] = 1
+        return response
+
+        
+        
 
 
 
