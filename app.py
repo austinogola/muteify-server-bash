@@ -10,7 +10,7 @@ import ffmpeg
 from spleeter.separator import Separator
 from spleeter.audio.adapter import AudioAdapter
 from scipy.io.wavfile import write as write_wav
-from downloaders import (major_downloader)
+from downloaders import major_downloader
 
 DOWNLOAD_DIR = "downloads"
 VOCALS_DIR = "vocals"
@@ -74,6 +74,9 @@ def separate_segment(mp3_path, start: float, end: float, separator: Separator):
             if os.path.exists(temp_segment.name):
                 os.remove(temp_segment.name)
 
+# Redis key to track separation status
+SEPARATION_STATUS_KEY = "separation_status"  # Redis set to track video status
+
 def downloader_thread():
     """Background thread to pop video IDs from download queue, download audio, then queue CPU separation."""
     while True:
@@ -82,7 +85,7 @@ def downloader_thread():
             try:
                 print(f"[DOWNLOADER] Downloading audio for {video_id}")
                 # Your major_downloader should save mp3 to DOWNLOAD_DIR/{video_id}.mp3
-                major_downloader(video_id)
+                ress = major_downloader(video_id)
                 mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
 
                 if os.path.exists(mp3_path):
@@ -101,11 +104,10 @@ def downloader_thread():
 
 def cpu_worker_loop():
     """Process CPU separation queue with CPU-only Spleeter."""
-    # Disable GPU for this process explicitly
     import os
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     print("[CPU WORKER] Starting CPU-only Spleeter instance...")
-    cpu_separator = Separator('spleeter:2stems')  # now uses CPU only
+    cpu_separator = Separator('spleeter:2stems')  # CPU only
 
     while True:
         item = redis_client.lpop("separation_cpu_queue")
@@ -120,7 +122,9 @@ def cpu_worker_loop():
                 print(f"[CPU WORKER] Separating vocals CPU: {video_id} [{start}-{end}]")
                 vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), cpu_separator)
 
-                # Optionally save vocal_path info or cache vocal_bytes in Redis here
+                # Update separation status in Redis to "completed_cpu"
+                redis_client.hset(SEPARATION_STATUS_KEY, video_id, "completed_cpu")
+
                 redis_client.sadd("separated_vocals_cpu", vocal_path)
                 print(f"[CPU WORKER] Separation done: {vocal_path}")
 
@@ -130,7 +134,7 @@ def cpu_worker_loop():
             time.sleep(1)
 
 def gpu_worker_loop():
-    """Process GPU separation queue."""
+    """Process GPU separation queue with GPU-based Spleeter."""
     global gpu_separator  # use the pre-initialized GPU separator
 
     while True:
@@ -146,7 +150,9 @@ def gpu_worker_loop():
                 print(f"[GPU WORKER] Separating vocals GPU: {video_id} [{start}-{end}]")
                 vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
 
-                # Optionally save or cache here
+                # Update separation status in Redis to "completed_gpu"
+                redis_client.hset(SEPARATION_STATUS_KEY, video_id, "completed_gpu")
+
                 redis_client.sadd("separated_vocals_gpu", vocal_path)
                 print(f"[GPU WORKER] Separation done: {vocal_path}")
 
@@ -155,7 +161,23 @@ def gpu_worker_loop():
         else:
             time.sleep(1)
 
-# Flask endpoints
+# Add the new Flask endpoint to check separation status
+@app.route("/separation-status/<video_id>", methods=["GET"])
+def separation_status(video_id):
+    status = redis_client.hget(SEPARATION_STATUS_KEY, video_id)
+
+    if status:
+        return jsonify({"video_id": video_id, "status": status}), 200
+    else:
+        # Video is not found in the separation status table, check other queues
+        if redis_client.sismember("separation_cpu_queue", video_id):
+            return jsonify({"video_id": video_id, "status": "in_cpu_queue"}), 200
+        elif redis_client.sismember("separation_gpu_queue", video_id):
+            return jsonify({"video_id": video_id, "status": "in_gpu_queue"}), 200
+        else:
+            return jsonify({"video_id": video_id, "status": "not_queued"}), 404
+
+# Flask routes for download and queue management
 
 @app.route("/download", methods=["POST"])
 def add_to_download_queue():
