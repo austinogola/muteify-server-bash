@@ -106,6 +106,17 @@ def download_endpoint():
             result = major_downloader(video_id)
             result["video_id"]= video_id
             results.append(result)
+            if( "success" in result and result["success"]==True):
+                
+                vocals_key = f"vocals:{video_id}"
+                if not redis_client.exists(vocals_key):
+                    local_vocal_path = f"/tmp/{video_id}_vocals.mp3"
+                    if os.path.exists(local_vocal_path):
+                        redis_client.setex(vocals_key, 3600, open(local_vocal_path, "rb").read())
+                    elif download_b2_to_local(f"vocals/{video_id}.mp3", local_vocal_path):
+                        redis_client.setex(vocals_key, 3600, open(local_vocal_path, "rb").read())
+                    else:
+                        threading.Thread(target=background_full_processing, args=(video_id, result["file_path"])).start()
         except Exception as e:
             results.append({
                 "video_id": video_id,
@@ -277,6 +288,15 @@ def get_duration():
     else:
         return jsonify({"error": "Missing "}), 400
     
+    
+def background_full_processing(video_id, file_path):
+    try:
+        vocal_mp3_bytes = separate_full_vocals(file_path)
+        # redis_client.set(f"vocals:{video_id}", vocal_mp3_bytes)
+        redis_client.setex(f"vocals:{video_id}", 3600, vocal_mp3_bytes)
+        upload_bytes_to_b2(vocal_mp3_bytes, f"vocals/{video_id}.mp3")
+    except Exception as e:
+        print(f"Background processing failed: {e}")
 
 @app.route('/separate', methods=['POST'])
 def separate_endpoint():
@@ -324,14 +344,7 @@ def separate_endpoint():
             # redis_client.set(raw_key, f.read())
             redis_client.setex(raw_key, 3600, f.read())
 
-    def background_full_processing(video_id, file_path):
-        try:
-            vocal_mp3_bytes = separate_full_vocals(file_path)
-            # redis_client.set(f"vocals:{video_id}", vocal_mp3_bytes)
-            redis_client.setex(f"vocals:{video_id}", 3600, vocal_mp3_bytes)
-            upload_bytes_to_b2(vocal_mp3_bytes, f"vocals/{video_id}.mp3")
-        except Exception as e:
-            print(f"Background processing failed: {e}")
+   
 
     # Start background processing
     if not redis_client.exists(vocals_key):
