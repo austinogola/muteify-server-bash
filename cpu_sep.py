@@ -75,7 +75,6 @@ def cpu_worker_loop():
         if item:
             item_str = item.decode("utf-8")
             video_id, start, end = item_str.split("|")
-            video_id = video_id.decode('utf-8')
             try:
                 mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
                 if not os.path.exists(mp3_path):
@@ -84,7 +83,7 @@ def cpu_worker_loop():
 
                 print(f"[CPU WORKER] Separating vocals CPU: {video_id} [{start}-{end}]")
                 vocal_bytes, vocal_path = cpu_separate_segment(mp3_path, float(start), float(end), cpu_separator)
-                vocal_key = f"vocals:{video_id}-{start}|{end}"
+                vocal_key = f"vocals:{video_id}-{int(start)}|{int(end)}"
 
                 redis_client.setex(vocal_key, 1800, vocal_bytes)
                 print("exists",vocal_key, redis_client.exists(vocal_key))
