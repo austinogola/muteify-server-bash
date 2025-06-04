@@ -73,6 +73,7 @@ def start_separation():
     vidd= video_id.encode('utf-8')
     print(type(video_id))
     vocal_key = f"vocals:{vidd}-{start}|{end}"
+    print("exists", vocal_key,redis_client.exists(vocal_key))
     if redis_client.exists(vocal_key):
         vocal_mp3 = redis_client.get(vocal_key)
         response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
