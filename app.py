@@ -65,12 +65,13 @@ def start_separation():
     end = request.json.get("end",9999)
     next_chunk =request.json.get("next_chunk",False)
     
-    vocal_key = f"vocals:{video_id}-{start}|{end}"
+    # vocal_key = f"vocals:{video_id}-{start}|{end}"
     
     if not video_id:
         return jsonify({"error": "Missing video_id"}), 400
     
     vidd= video_id.encode('utf-8')
+    print(type(video_id))
     vocal_key = f"vocals:{vidd}-{start}|{end}"
     if redis_client.exists(vocal_key):
         vocal_mp3 = redis_client.get(vocal_key)
