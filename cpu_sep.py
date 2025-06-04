@@ -56,7 +56,7 @@ def separate_full_vocals(mp3_input_path: str, separator: Separator) -> bytes:
 
             return vocal_mp3_bytes, vocal_path
 
-def separate_segment(mp3_path, start: float, end: float, separator: Separator):
+def cpu_separate_segment(mp3_path, start: float, end: float, separator: Separator):
     """Extract segment using ffmpeg, then separate vocals with provided separator."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_segment:
         ffmpeg.input(mp3_path, ss=start, to=end).output(temp_segment.name).run(quiet=True, overwrite_output=True)
@@ -69,13 +69,8 @@ def separate_segment(mp3_path, start: float, end: float, separator: Separator):
 
 
 def cpu_worker_loop():
-    """Process CPU separation queue with CPU-only Spleeter."""
-    import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    print("[CPU WORKER] Starting CPU-only Spleeter instance...")
-    cpu_separator = Separator('spleeter:2stems')  # CPU only
-
     while True:
+        print('cpu loop')
         item = redis_client.lpop("separation_cpu_queue")
         if item:
             video_id, start, end = item.split("|")
@@ -86,7 +81,7 @@ def cpu_worker_loop():
                     continue
 
                 print(f"[CPU WORKER] Separating vocals CPU: {video_id} [{start}-{end}]")
-                vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), cpu_separator)
+                vocal_bytes, vocal_path = cpu_separate_segment(mp3_path, float(start), float(end), cpu_separator)
 
 
                 redis_client.setex(f"vocals:{video_id}-{start}|{end}", 1800, vocal_bytes)

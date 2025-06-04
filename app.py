@@ -12,7 +12,7 @@ from spleeter.audio.adapter import AudioAdapter
 from scipy.io.wavfile import write as write_wav
 from downloaders import major_downloader
 
-from cpu_sep import cpu_worker_loop
+from cpu_sep import cpu_worker_loop,cpu_separator,cpu_separate_segment
 
 DOWNLOAD_DIR = "downloads"
 VOCALS_DIR = "vocals"
@@ -50,6 +50,8 @@ def downloader_thread():
                 if os.path.exists(mp3_path):
                     redis_client.sadd("downloaded_videos", video_id)
                     print(f"[DOWNLOADER] Download completed: {video_id}")
+                    
+                    # vocal_bytes_for_30_secs = cpu_separate_segment(mp3_path,0,30,cpu_separator)
 
                     # Queue CPU separation after download for full audio (0 to duration)
                     redis_client.rpush("separation_cpu_queue", f"{video_id}|0|30")
@@ -114,9 +116,11 @@ for _ in range(4):  # Tune this based on load and vCPUs
     threading.Thread(target=downloader_thread, daemon=True).start()
     
     
+cpu_worker = multiprocessing.Process(target=cpu_worker_loop, daemon=True)
+cpu_worker.start()
+    
     
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
     
-    cpu_worker = multiprocessing.Process(target=cpu_worker_loop, daemon=True)
-    cpu_worker.start()
+    
