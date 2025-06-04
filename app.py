@@ -3,10 +3,10 @@ import time
 import tempfile
 import threading
 import multiprocessing
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, make_response
 import redis
 import ffmpeg
-
+from io import BytesIO
 from spleeter.separator import Separator
 from spleeter.audio.adapter import AudioAdapter
 from scipy.io.wavfile import write as write_wav
@@ -34,6 +34,49 @@ separator_lock = threading.Lock()
 # Initialize Separator instances globally to share in workers
 # GPU Separator: default, uses GPU if available
 gpu_separator = Separator('spleeter:2stems')
+
+
+
+@app.route("/separate/status", methods=["POST"])
+def check_separation_status():
+    video_id = request.json.get("video_id")
+    start = request.json.get("start",0)
+    end = request.json.get("end",0)
+    
+    vocal_key = f"vocals:{video_id}-{start}|{end}"
+    
+    if not video_id:
+        return jsonify({"error": "Missing video_id"}), 400
+    if redis_client.exists(vocal_key):
+        return jsonify({"status": "section_separated", "video_id": video_id}), 200
+    else:
+       return jsonify({"status": "not_separated", "video_id": video_id}), 200 
+   
+   
+@app.route("/separate", methods=["POST"])
+def start_separation():
+    video_id = request.json.get("video_id")
+    start = request.json.get("start",0)
+    end = request.json.get("end",9999)
+    next_chunk =request.json.get("next_chunk",False)
+    
+    vocal_key = f"vocals:{video_id}-{start}|{end}"
+    
+    if not video_id:
+        return jsonify({"error": "Missing video_id"}), 400
+    
+    
+    if redis_client.exists(vocal_key):
+        vocal_mp3 = redis_client.get(vocal_key)
+        response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+        if(next_chunk):
+            redis_client.lpush("separation_cpu_queue", f"{video_id}|{end}|{end+30}")
+        # next_vocal_key = f"vocals:{video_id}-{end}|{start}"
+        return response
+    else:
+       return jsonify({"status": "not_separated", "video_id": video_id}), 200 
+    
+
 
 def downloader_thread():
     """Background thread to pop video IDs from download queue, download audio, then queue CPU separation."""
@@ -93,6 +136,8 @@ def check_status(video_id):
         return jsonify({"status": "not_queued", "video_id": video_id})
     
     
+    
+
     
 @app.route("/download/prioritize", methods=["POST"])
 def prioritize_download():

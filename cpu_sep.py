@@ -70,7 +70,6 @@ def cpu_separate_segment(mp3_path, start: float, end: float, separator: Separato
 
 def cpu_worker_loop():
     while True:
-        print('cpu loop')
         item = redis_client.lpop("separation_cpu_queue")
         
         if item:
