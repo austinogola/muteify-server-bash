@@ -75,6 +75,7 @@ def cpu_worker_loop():
         if item:
             item_str = item.decode("utf-8")
             video_id, start, end = item_str.split("|")
+            video_id = video_id.decode('utf-8')
             try:
                 mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
                 if not os.path.exists(mp3_path):
