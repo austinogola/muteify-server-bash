@@ -24,7 +24,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(VOCALS_DIR, exist_ok=True)
 
 # Redis connection (multiprocessing-safe as long as separate connections are used in processes)
-redis_client = redis.Redis(decode_responses=False)
+redis_client = redis.Redis(decode_responses=True)
 
 app = Flask(__name__)
 
@@ -43,9 +43,11 @@ def check_separation_status():
     start = request.json.get("start",0)
     end = request.json.get("end",0)
     
+    my_bytes = video_id.encode('utf-8')
+    
     print(type(video_id))
     
-    vocal_key = f"vocals:{video_id}-{start}|{end}"
+    vocal_key = f"vocals:{my_bytes}-{start}|{end}"
     
     print("exists", vocal_key,redis_client.exists(vocal_key))
     if not video_id:
