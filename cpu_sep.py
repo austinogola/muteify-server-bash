@@ -86,7 +86,7 @@ def cpu_worker_loop():
                 vocal_key = f"vocals:{video_id}-{start}|{end}"
 
                 redis_client.setex(vocal_key, 1800, vocal_bytes)
-                print(redis_client.exists(vocal_key))
+                print("exists",vocal_key, redis_client.exists(vocal_key))
                 
                 # redis_client.sadd("separated_vocals_cpu", vocal_path)
                 print(f"[CPU WORKER] Separation done: {vocal_path}")

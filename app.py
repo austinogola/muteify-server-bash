@@ -45,6 +45,7 @@ def check_separation_status():
     
     vocal_key = f"vocals:{video_id}-{start}|{end}"
     
+    print("exists", vocal_key,redis_client.exists(vocal_key))
     if not video_id:
         return jsonify({"error": "Missing video_id"}), 400
     if redis_client.exists(vocal_key):
