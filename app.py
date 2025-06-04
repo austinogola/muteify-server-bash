@@ -87,5 +87,5 @@ for _ in range(4):  # Tune this based on load and vCPUs
     threading.Thread(target=downloader_thread, daemon=True).start()
 
 
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
