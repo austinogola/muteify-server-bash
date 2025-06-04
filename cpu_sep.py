@@ -72,8 +72,10 @@ def cpu_worker_loop():
     while True:
         print('cpu loop')
         item = redis_client.lpop("separation_cpu_queue")
+        
         if item:
-            video_id, start, end = item.split("|")
+            item_str = item.decode("utf-8")
+            video_id, start, end = item_str.split("|")
             try:
                 mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
                 if not os.path.exists(mp3_path):
