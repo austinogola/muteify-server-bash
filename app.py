@@ -43,6 +43,8 @@ def check_separation_status():
     start = request.json.get("start",0)
     end = request.json.get("end",0)
     
+    print(type(video_id))
+    
     vocal_key = f"vocals:{video_id}-{start}|{end}"
     
     print("exists", vocal_key,redis_client.exists(vocal_key))

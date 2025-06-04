@@ -73,10 +73,18 @@ def cpu_worker_loop():
         item = redis_client.lpop("separation_cpu_queue")
         
         if item:
-            print(f"Type of item: {type(item)}")
-            item_str = item.decode("utf-8")
-            print(f"Type of item: {type(item_str)}")
+            print(f"Type of item before decoding: {type(item)}")  # Check if it's bytes
+            item_str = item.decode("utf-8")  # Decode bytes to string
+            print(f"Type of item after decoding: {type(item_str)}")  # Should be <class 'str'>
+
+            # Check the decoded string to confirm
+            print(f"Decoded item: {item_str}")
+
+            # Split string into video_id, start, and end
             video_id, start, end = item_str.split("|")
+
+            print(f"video_id: {video_id}, start: {start}, end: {end}")
+            print(type(video_id))
             try:
                 mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
                 if not os.path.exists(mp3_path):
