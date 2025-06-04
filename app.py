@@ -24,7 +24,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(VOCALS_DIR, exist_ok=True)
 
 # Redis connection (multiprocessing-safe as long as separate connections are used in processes)
-redis_client = redis.Redis(decode_responses=True)
+redis_client = redis.Redis(decode_responses=False)
 
 app = Flask(__name__)
 
