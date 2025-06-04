@@ -83,10 +83,12 @@ def cpu_worker_loop():
 
                 print(f"[CPU WORKER] Separating vocals CPU: {video_id} [{start}-{end}]")
                 vocal_bytes, vocal_path = cpu_separate_segment(mp3_path, float(start), float(end), cpu_separator)
+                vocal_key = f"vocals:{video_id}-{start}|{end}"
 
-
-                redis_client.setex(f"vocals:{video_id}-{start}|{end}", 1800, vocal_bytes)
-                redis_client.sadd("separated_vocals_cpu", vocal_path)
+                redis_client.setex(vocal_key, 1800, vocal_bytes)
+                print(redis_client.exists(vocal_key))
+                
+                # redis_client.sadd("separated_vocals_cpu", vocal_path)
                 print(f"[CPU WORKER] Separation done: {vocal_path}")
 
             except Exception as e:
