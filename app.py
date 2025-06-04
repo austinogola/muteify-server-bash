@@ -70,8 +70,9 @@ def start_separation():
     if not video_id:
         return jsonify({"error": "Missing video_id"}), 400
     
-    
-    if redis_client.exists(video_id.encode('utf-8')):
+    vidd= video_id.encode('utf-8')
+    vocal_key = f"vocals:{vidd}-{start}|{end}"
+    if redis_client.exists(vocal_key):
         vocal_mp3 = redis_client.get(vocal_key)
         response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
         if(next_chunk):
