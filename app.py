@@ -78,7 +78,7 @@ def start_separation():
         vocal_mp3 = redis_client.get(vocal_key)
         response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
         if(next_chunk):
-            redis_client.lpush("separation_cpu_queue", f"{video_id}|{end}|{end+30}")
+            redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
         # next_vocal_key = f"vocals:{video_id}-{end}|{start}"
         return response
     else:
