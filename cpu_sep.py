@@ -73,7 +73,9 @@ def cpu_worker_loop():
         item = redis_client.lpop("separation_cpu_queue")
         
         if item:
+            print(f"Type of item: {type(item)}")
             item_str = item.decode("utf-8")
+            print(f"Type of item: {type(item_str)}")
             video_id, start, end = item_str.split("|")
             try:
                 mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
