@@ -67,7 +67,7 @@ def token_required(f):
             return jsonify({"error": "Token is missing"}), 403
 
         try:
-            token = token.split(" ")[1] if " " in token else token  # Handle "Bearer <token>"
+            token = token.split(" ")[1] if " " in token else token
             data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
             current_user = data["email"]
         except jwt.ExpiredSignatureError:
@@ -76,7 +76,8 @@ def token_required(f):
             print(e)
             return jsonify({"error": "Invalid token"}), 403
 
-        return f(current_user, *args, **kwargs)
+        # ✅ Pass current_user into kwargs so other decorators can access it
+        return f(*args, current_user=current_user, **kwargs)
     return decorated
 
 
@@ -84,6 +85,7 @@ def usage_check(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         current_user = kwargs.get("current_user")
+        print(current_user)
         if not current_user:
             return jsonify({"error": "Unauthorized"}), 403
         try:
