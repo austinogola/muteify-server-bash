@@ -83,63 +83,40 @@ def token_required(f):
 def usage_check(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')
-        if not token:
-            return jsonify({"error": "Token is missing"}), 403
+        current_user = kwargs.get("current_user")
+        if not current_user:
+            return jsonify({"error": "Unauthorized"}), 403
         try:
             json_body = request.get_json()
-            start = request.json.get("start",0)
-            end = request.json.get("end",30)
-            
-            token = token.split(" ")[1] if " " in token else token  # Handle "Bearer <token>"
-            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            current_user = data["email"]
-            
+            start = json_body.get("start", 0)
+            end = json_body.get("end", 30)
+
             users = mongo.db.users
             accounts = mongo.db.accounts
-            
+
             user = users.find_one({"email": current_user})
             account = accounts.find_one({"userId": str(user["_id"])})
-            
+
             usage_records = account.get("usage", [])
-            
             today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
             today_usage_minutes = sum(u["minutes"] for u in usage_records if u["date"] == today_date)
-            
+
             plan = account.get("plan")
-            
-            the_plan_obj = [it for it in ALL_PLANS if it["name"]==plan][0]
-            
+            the_plan_obj = [it for it in ALL_PLANS if it["name"] == plan][0]
             allowed_minutes = the_plan_obj['minutes']
-            
-            print('total allowed minutes', allowed_minutes)
-            print('usage today',today_usage_minutes)
-            
             remaining_minutes = max(allowed_minutes - today_usage_minutes, 0)
-            
-            print('minutes remaining today',remaining_minutes)
-            
-            
-            
-            
-            
+
             requested_duration_seconds = (end - start) / 1000.0
             requested_duration_minutes = requested_duration_seconds / 60.0
-            
-            print('Looking to use',requested_duration_minutes)
-            
-            if(requested_duration_minutes > remaining_minutes):
-                return jsonify({"error": "Usage limit"}), 402
-            else:
-              return f(current_user, *args, **kwargs)  
-            
-        except jwt.ExpiredSignatureError:
-            return jsonify({"error": "Token expired"}), 403
+
+            if requested_duration_minutes > remaining_minutes:
+                return jsonify({"error": "Usage limit exceeded"}), 402
+
+            return f(*args, **kwargs)
+
         except Exception as e:
             print(e)
-            return jsonify({"error": "Invalid token"}), 403
-
-        return f(current_user, *args, **kwargs)
+            return jsonify({"error": "Usage check failed"}), 400
     return decorated
 
 
@@ -201,7 +178,7 @@ def check_separation_status():
 @app.route("/separate", methods=["POST"])
 @token_required
 @usage_check
-def start_separation():
+def start_separation(current_user,):
     video_id = request.json.get("video_id")
     start = request.json.get("start",0)
     end = request.json.get("end",9999)
