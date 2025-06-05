@@ -142,11 +142,10 @@ def gpu_worker_loop():
 
     while True:
         item = redis_client.lpop("separation_gpu_queue")
-        item_str = item.decode("utf-8")  # Decode bytes to string
-         
-        video_id, start, end = item_str.split("|")
+        
         if item:
-            video_id, start, end = item.split("|")
+            item_str = item.decode("utf-8")  # Decode bytes to string
+            video_id, start, end = item_str.split("|")
             try:
                 mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
                 if not os.path.exists(mp3_path):
