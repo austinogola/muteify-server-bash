@@ -4,6 +4,7 @@ import tempfile
 import threading
 import multiprocessing
 from flask import Flask, request, jsonify, send_file, make_response
+from flask_cors import CORS
 import redis
 import ffmpeg
 from io import BytesIO
@@ -27,6 +28,7 @@ os.makedirs(VOCALS_DIR, exist_ok=True)
 redis_client = redis.Redis(decode_responses=False)
 
 app = Flask(__name__)
+CORS(app,expose_headers=["FILE-READY"])
 
 # Instantiate a global separator lock for threading in main process if needed
 separator_lock = threading.Lock()
@@ -84,6 +86,77 @@ def start_separation():
     else:
        return jsonify({"status": "not_separated", "video_id": video_id}), 200 
     
+    
+    
+def write_mp3_from_wav(wav_path: str, mp3_path: str):
+    ffmpeg.input(wav_path).output(mp3_path, audio_bitrate='192k', threads=0).run(quiet=True, overwrite_output=True)
+    
+def separate_full_vocals(mp3_input_path: str, separator: Separator) -> bytes:
+    """Run Spleeter separation on given MP3 path using provided separator, return vocal MP3 bytes."""
+    audio_loader = AudioAdapter.default()
+    waveform, _ = audio_loader.load(mp3_input_path, sample_rate=44100)
+
+    prediction = separator.separate(waveform)
+    vocals = prediction['vocals']
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+        write_wav(temp_wav.name, 44100, vocals)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_mp3_out:
+            write_mp3_from_wav(temp_wav.name, temp_mp3_out.name)
+
+            with open(temp_mp3_out.name, "rb") as f:
+                vocal_mp3_bytes = f.read()
+
+            # Save vocal MP3 permanently to VOCALS_DIR
+            vocal_filename = os.path.basename(mp3_input_path).replace(".mp3", "_vocals.mp3")
+            vocal_path = os.path.join(VOCALS_DIR, vocal_filename)
+            with open(vocal_path, "wb") as out_f:
+                out_f.write(vocal_mp3_bytes)
+
+            # Cleanup temp files
+            os.remove(temp_wav.name)
+            os.remove(temp_mp3_out.name)
+
+            return vocal_mp3_bytes, vocal_path
+
+def separate_segment(mp3_path, start: float, end: float, separator: Separator):
+    """Extract segment using ffmpeg, then separate vocals with provided separator."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_segment:
+        ffmpeg.input(mp3_path, ss=start, to=end).output(temp_segment.name).run(quiet=True, overwrite_output=True)
+        try:
+            return separate_full_vocals(temp_segment.name, separator)
+        finally:
+            if os.path.exists(temp_segment.name):
+                os.remove(temp_segment.name)
+                
+def gpu_worker_loop():
+    """Process GPU separation queue with GPU-based Spleeter."""
+    global gpu_separator  # use the pre-initialized GPU separator
+
+    while True:
+        item = redis_client.lpop("separation_gpu_queue")
+        if item:
+            video_id, start, end = item.split("|")
+            try:
+                mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+                if not os.path.exists(mp3_path):
+                    print(f"[GPU WORKER] MP3 not found for {video_id}")
+                    continue
+
+                print(f"[GPU WORKER] Separating vocals GPU: {video_id} [{start}-{end}]")
+                vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
+
+                # Update separation status in Redis to "completed_gpu"
+                # redis_client.hset(SEPARATION_STATUS_KEY, video_id, "completed_gpu")
+
+                redis_client.sadd("separated_vocals_gpu", vocal_path)
+                print(f"[GPU WORKER] Separation done: {vocal_path}")
+
+            except Exception as e:
+                print(f"[GPU WORKER] Error processing {video_id}: {e}")
+        else:
+            time.sleep(1)
 
 
 def downloader_thread():
