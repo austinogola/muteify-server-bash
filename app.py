@@ -15,6 +15,8 @@ from downloaders import major_downloader
 
 from cpu_sep import cpu_worker_loop,cpu_separator,cpu_separate_segment
 
+from storage_utils import upload_to_b2, upload_bytes_to_b2, download_b2_to_local,file_exists_in_b2
+
 DOWNLOAD_DIR = "downloads"
 VOCALS_DIR = "vocals"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -49,7 +51,7 @@ def check_separation_status():
     
     print(type(video_id))
     
-    vocal_key = f"vocals:{my_bytes}-{start}|{end}"
+    vocal_key = f"vocals-{my_bytes}-{start}|{end}"
     
     print("exists", vocal_key,redis_client.exists(vocal_key))
     if not video_id:
@@ -68,21 +70,21 @@ def start_separation():
     next_chunk =request.json.get("next_chunk",False)
     prioritize_separation = request.json.get("prioritize",False)
     
-    # vocal_key = f"vocals:{video_id}-{start}|{end}"
+    # vocal_key = f"vocals-{video_id}-{start}|{end}"
     
     if not video_id:
         return jsonify({"error": "Missing video_id"}), 400
     
     vidd= video_id.encode('utf-8')
     print(type(video_id))
-    vocal_key = f"vocals:{vidd}-{start}|{end}"
+    vocal_key = f"vocals-{vidd}-{start}|{end}"
     print("exists", vocal_key,redis_client.exists(vocal_key))
     if redis_client.exists(vocal_key):
         vocal_mp3 = redis_client.get(vocal_key)
         response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
         if(next_chunk):
             redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
-        # next_vocal_key = f"vocals:{video_id}-{end}|{start}"
+        # next_vocal_key = f"vocals-{video_id}-{end}|{start}"
         return response
     else:
         if prioritize_separation:
@@ -143,30 +145,43 @@ def gpu_worker_loop():
     while True:
         item = redis_client.lpop("separation_gpu_queue")
         
-        if item:
+        if item :
             item_str = item.decode("utf-8")  # Decode bytes to string
             video_id, start, end = item_str.split("|")
-            try:
-                mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-                if not os.path.exists(mp3_path):
-                    print(f"[GPU WORKER] MP3 not found for {video_id}")
-                    continue
+            
+            vocal_key = f"vocals-{video_id}-{int(start)}|{int(end)}"
+            
+            #if segment not in redis
+            if(not redis_client.exists(vocal_key)):
+                #if vocal segment in b2
+                local_vocal_path = f"/tmp/{vocal_key}.mp3"
+                if(download_b2_to_local(f"vocals/{vocal_key}.mp3", local_vocal_path)):
+                    redis_client.setex(vocal_key, 1800, open(local_vocal_path, "rb").read())
+                    print(f"Segment gotten from b2: {local_vocal_path}")
+                    
+                else:
+                    try:
+                        mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+                        if not os.path.exists(mp3_path):
+                            print(f"[GPU WORKER] MP3 not found for {video_id}")
+                            continue
 
-                print(f"[GPU WORKER] Separating vocals GPU: {video_id} [{start}-{end}]")
-                vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
+                        print(f"[GPU WORKER] Separating vocals GPU: {video_id} [{start}-{end}]")
+                        vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
 
-                # Update separation status in Redis to "completed_gpu"
-                # redis_client.hset(SEPARATION_STATUS_KEY, video_id, "completed_gpu")
+                        # Update separation status in Redis to "completed_gpu"
+                        # redis_client.hset(SEPARATION_STATUS_KEY, video_id, "completed_gpu")
 
-                redis_client.sadd("separated_vocals_gpu", vocal_path)
-                vocal_key = f"vocals:{video_id}-{int(start)}|{int(end)}"
+                        redis_client.sadd("separated_vocals_gpu", vocal_path)
+                        
 
-                redis_client.setex(vocal_key, 1800, vocal_bytes)
-                print("exists",vocal_key, redis_client.exists(vocal_key))
-                print(f"[GPU WORKER] Separation done: {vocal_path}")
+                        redis_client.setex(vocal_key, 1800, vocal_bytes)
+                        upload_bytes_to_b2(vocal_bytes, f"vocals/{vocal_key}.mp3")
+                        # print("exists",vocal_key, redis_client.exists(vocal_key))
+                        print(f"[GPU WORKER] Separation done: {vocal_path}")
 
-            except Exception as e:
-                print(f"[GPU WORKER] Error processing {video_id}: {e}")
+                    except Exception as e:
+                        print(f"[GPU WORKER] Error processing {video_id}: {e}")
         else:
             time.sleep(1)
 
@@ -180,8 +195,13 @@ def downloader_thread():
             try:
                 print(f"[DOWNLOADER] Downloading audio for {video_id}")
                 # Your major_downloader should save mp3 to DOWNLOAD_DIR/{video_id}.mp3
-                ress = major_downloader(video_id)
+                
+                
                 mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+                
+                if(not os.path.exists(mp3_path)):
+                    if(not download_b2_to_local(f"raw_mp3/{video_id}.mp3", mp3_path)):
+                        ress = major_downloader(video_id)
 
                 if os.path.exists(mp3_path):
                     redis_client.sadd("downloaded_videos", video_id)
@@ -191,6 +211,7 @@ def downloader_thread():
 
                     # Queue CPU separation after download for full audio (0 to duration)
                     redis_client.rpush("separation_cpu_queue", f"{video_id}|0|30")
+                    upload_to_b2(mp3_path,f"raw_mp3/{video_id}.mp3",)
 
                 redis_client.srem("download_tracking", video_id)
 

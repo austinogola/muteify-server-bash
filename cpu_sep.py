@@ -6,6 +6,7 @@ import redis
 import time
 import ffmpeg
 import tempfile
+from storage_utils import upload_to_b2, upload_bytes_to_b2, download_b2_to_local,file_exists_in_b2
 
 redis_client = redis.Redis(decode_responses=False)
 
@@ -76,27 +77,37 @@ def cpu_worker_loop():
             item_str = item.decode("utf-8")  # Decode bytes to string
          
             video_id, start, end = item_str.split("|")
+            
+            vocal_key = f"vocals-{video_id}-{int(start)}|{int(end)}"
 
-            print(f"video_id: {video_id}, start: {start}, end: {end}")
-            print(type(video_id))
-            try:
-                mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-                if not os.path.exists(mp3_path):
-                    print(f"[CPU WORKER] MP3 not found for {video_id}")
-                    continue
+            if(not redis_client.exists(vocal_key)):
+            #if vocal segment in b2
+                local_vocal_path = f"/tmp/{vocal_key}.mp3"
+                if(download_b2_to_local(f"vocals/{vocal_key}.mp3", local_vocal_path)):
+                    redis_client.setex(vocal_key, 1800, open(local_vocal_path, "rb").read())
+                    print(f"Segment gotten from b2: {local_vocal_path}")
+                    
+                else:
+                    try:
+                        mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+                        if not os.path.exists(mp3_path):
+                            print(f"[CPU WORKER] MP3 not found for {video_id}")
+                            continue
 
-                print(f"[CPU WORKER] Separating vocals CPU: {video_id} [{start}-{end}]")
-                vocal_bytes, vocal_path = cpu_separate_segment(mp3_path, float(start), float(end), cpu_separator)
-                vocal_key = f"vocals:{video_id}-{int(start)}|{int(end)}"
+                        print(f"[CPU WORKER] Separating vocals CPU: {video_id} [{start}-{end}]")
+                        vocal_bytes, vocal_path = cpu_separate_segment(mp3_path, float(start), float(end), cpu_separator)
+                        
 
-                redis_client.setex(vocal_key, 1800, vocal_bytes)
-                print("exists",vocal_key, redis_client.exists(vocal_key))
-                
-                # redis_client.sadd("separated_vocals_cpu", vocal_path)
-                print(f"[CPU WORKER] Separation done: {vocal_path}")
+                        redis_client.setex(vocal_key, 1800, vocal_bytes)
+                        upload_bytes_to_b2(vocal_bytes, f"vocals/{vocal_key}.mp3")
+                        # print("exists",vocal_key, redis_client.exists(vocal_key))
+                        
+                        # redis_client.sadd("separated_vocals_cpu", vocal_path)
+                        print(f"[CPU WORKER] Separation done: {vocal_path}")
 
-            except Exception as e:
-                print(f"[CPU WORKER] Error processing {video_id}: {e}")
+                    except Exception as e:
+                        print(f"[CPU WORKER] Error processing {video_id}: {e}")   
+            
         else:
             time.sleep(1)
 

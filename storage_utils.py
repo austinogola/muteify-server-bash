@@ -19,17 +19,20 @@ bucket = b2_api.get_bucket_by_name(bucket_name)
 
 def upload_to_b2(file_path: str, b2_path: str):
     """Upload local file to B2."""
+    print(f'Uploading {file_path} bytes to {b2_path}')
     with open(file_path, 'rb') as f:
         bucket.upload_bytes(f.read(), b2_path)
         
         
 def upload_bytes_to_b2(data: bytes, b2_path: str):
     """Upload bytes directly to B2."""
+    print(f'Uploading bytes to {b2_path}')
     bucket.upload_bytes(data, b2_path)
     
     
 def download_b2_to_local(b2_path: str, local_path: str) -> bool:
     """Try downloading a file from B2 to a local path."""
+    print(f'Downloading from {b2_path}')
     try:
         file_info, file = bucket.download_file_by_name(b2_path)
         with open(local_path, 'wb') as f:
