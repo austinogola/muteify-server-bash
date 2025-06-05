@@ -109,7 +109,7 @@ def usage_check(f):
             remaining_minutes = max(allowed_minutes - today_usage_minutes, 0)
 
             
-            requested_duration_minutes = (end - start)
+            requested_duration_minutes = (end - start)/60
 
             if requested_duration_minutes > remaining_minutes:
                 return jsonify({"error": "Usage limit exceeded"}), 402
@@ -138,7 +138,7 @@ def update_account_usage(current_user):
     
     usage_records = account.get("usage", [])
    
-    requested_duration_minutes = (end - start)
+    requested_duration_minutes = (end - start)/60
     
     today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
     
