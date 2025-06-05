@@ -12,10 +12,15 @@ from spleeter.separator import Separator
 from spleeter.audio.adapter import AudioAdapter
 from scipy.io.wavfile import write as write_wav
 from downloaders import major_downloader
-
+from functools import wraps
 from cpu_sep import cpu_worker_loop,cpu_separator,cpu_separate_segment
 
 from storage_utils import upload_to_b2, upload_bytes_to_b2, download_b2_to_local,file_exists_in_b2
+
+from flask_pymongo import PyMongo
+from flask_bcrypt import Bcrypt
+import jwt
+import datetime
 
 DOWNLOAD_DIR = "downloads"
 VOCALS_DIR = "vocals"
@@ -32,6 +37,12 @@ redis_client = redis.Redis(decode_responses=False)
 app = Flask(__name__)
 CORS(app,expose_headers=["FILE-READY"])
 
+app.config["MONGO_URI"] = os.getenv("MONGO_DB_URL")
+mongo = PyMongo(app)
+bcrypt = Bcrypt(app)
+SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key")
+
+
 # Instantiate a global separator lock for threading in main process if needed
 separator_lock = threading.Lock()
 
@@ -40,6 +51,129 @@ separator_lock = threading.Lock()
 gpu_separator = Separator('spleeter:2stems')
 
 
+ALL_PLANS = [
+    {"name":'Basic-Trial',"minutes":60,"days":3,"test_prod_id":'prod_SIWSeodkjoYwtQ',"live_prod_id":'prod_SIvTcRCZbWzxMk'},
+    {"name":'Premium-Trial',"minutes":60,"days":3,"test_prod_id":'prod_SIXfHdO7F14kgZ',"live_prod_id":'prod_SIvSsVTJBsFv1O'},
+    {"name":'Basic',"minutes":45,"days":35,"test_prod_id":'prod_SIv7fc6J9GgW5Q',"live_prod_id":'prod_SIvOpOnPDR0pYn'},
+    {"name":'Premium',"minutes":9999,"days":35,"test_prod_id":'prod_SIv58GHgV6gnWy',"live_prod_id":'prod_SIvQywR4mFMLzA'},
+]
+
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({"error": "Token is missing"}), 403
+
+        try:
+            token = token.split(" ")[1] if " " in token else token  # Handle "Bearer <token>"
+            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            current_user = data["email"]
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "Token expired"}), 403
+        except Exception as e:
+            print(e)
+            return jsonify({"error": "Invalid token"}), 403
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+
+def usage_check(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+
+        try:
+            json_body = request.get_json()
+            start = request.json.get("start",0)
+            end = request.json.get("end",30)
+            
+            token = token.split(" ")[1] if " " in token else token  # Handle "Bearer <token>"
+            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            current_user = data["email"]
+            
+            users = mongo.db.users
+            accounts = mongo.db.accounts
+            
+            user = users.find_one({"email": current_user})
+            account = accounts.find_one({"userId": str(user["_id"])})
+            
+            usage_records = account.get("usage", [])
+            
+            today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
+            today_usage_minutes = sum(u["minutes"] for u in usage_records if u["date"] == today_date)
+            
+            plan = account.get("plan")
+            
+            the_plan_obj = [it for it in ALL_PLANS if it["name"]==plan][0]
+            
+            allowed_minutes = the_plan_obj['minutes']
+            
+            print('total allowed minutes', allowed_minutes)
+            print('usage today',today_usage_minutes)
+            
+            remaining_minutes = max(allowed_minutes - today_usage_minutes, 0)
+            
+            print('minutes remaining today',remaining_minutes)
+            
+            
+            
+            
+            
+            requested_duration_seconds = (end - start) / 1000.0
+            requested_duration_minutes = requested_duration_seconds / 60.0
+            
+            print('Looking to use',requested_duration_minutes)
+            
+            if(requested_duration_minutes > remaining_minutes):
+                return jsonify({"error": "Usage limit"}), 402
+            else:
+              return f(current_user, *args, **kwargs)  
+            
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "Token expired"}), 403
+        except Exception as e:
+            print(e)
+            return jsonify({"error": "Invalid token"}), 403
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+
+@app.route("/update/usage", methods=["POST"])
+@token_required
+def update_account_usage(current_user):
+    video_id = request.json.get("video_id")
+    start = request.json.get("start",0)
+    end = request.json.get("end",30)
+    
+    
+    users = mongo.db.users
+    accounts = mongo.db.accounts
+    
+    user = users.find_one({"email": current_user})
+    account = accounts.find_one({"userId": str(user["_id"])})
+    
+    usage_records = account.get("usage", [])
+    
+    requested_duration_seconds = (end - start) / 1000.0
+    requested_duration_minutes = requested_duration_seconds / 60.0
+    
+    today_date = datetime.datetime.utcnow().strftime('%Y-%m-%d')
+    
+    new_usage = {
+        "date": today_date,
+        "video_id":video_id,
+        "minutes": requested_duration_minutes,  # example field
+    }
+    
+    accounts.update_one(
+        {"userId": str(user["_id"])},
+        {"$push": {"usage": new_usage}}
+    )
+    
+    return jsonify({"status":'Usage updated'}),200
 
 @app.route("/separate/status", methods=["POST"])
 def check_separation_status():
@@ -63,6 +197,8 @@ def check_separation_status():
    
    
 @app.route("/separate", methods=["POST"])
+@token_required
+@usage_check
 def start_separation():
     video_id = request.json.get("video_id")
     start = request.json.get("start",0)
