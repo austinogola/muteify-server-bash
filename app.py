@@ -66,6 +66,7 @@ def start_separation():
     start = request.json.get("start",0)
     end = request.json.get("end",9999)
     next_chunk =request.json.get("next_chunk",False)
+    prioritize_separation = request.json.get("prioritize",False)
     
     # vocal_key = f"vocals:{video_id}-{start}|{end}"
     
@@ -84,7 +85,12 @@ def start_separation():
         # next_vocal_key = f"vocals:{video_id}-{end}|{start}"
         return response
     else:
-       return jsonify({"status": "not_separated", "video_id": video_id}), 200 
+        if prioritize_separation:
+            redis_client.rpush("separation_gpu_queue", f"{vidd}|{start}|{end}")
+            if(next_chunk):
+                redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
+            
+        return jsonify({"status": "not_separated", "video_id": video_id}), 200 
     
     
     
@@ -136,6 +142,9 @@ def gpu_worker_loop():
 
     while True:
         item = redis_client.lpop("separation_gpu_queue")
+        item_str = item.decode("utf-8")  # Decode bytes to string
+         
+        video_id, start, end = item_str.split("|")
         if item:
             video_id, start, end = item.split("|")
             try:
@@ -151,6 +160,10 @@ def gpu_worker_loop():
                 # redis_client.hset(SEPARATION_STATUS_KEY, video_id, "completed_gpu")
 
                 redis_client.sadd("separated_vocals_gpu", vocal_path)
+                vocal_key = f"vocals:{video_id}-{int(start)}|{int(end)}"
+
+                redis_client.setex(vocal_key, 1800, vocal_bytes)
+                print("exists",vocal_key, redis_client.exists(vocal_key))
                 print(f"[GPU WORKER] Separation done: {vocal_path}")
 
             except Exception as e:
@@ -244,6 +257,9 @@ for _ in range(4):  # Tune this based on load and vCPUs
     
 cpu_worker = multiprocessing.Process(target=cpu_worker_loop, daemon=True)
 cpu_worker.start()
+
+gpu_worker = multiprocessing.Process(target=gpu_worker_loop, daemon=True)
+gpu_worker.start()
     
     
 if __name__ == '__main__':
