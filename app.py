@@ -387,8 +387,11 @@ def prioritize_download():
     return jsonify({"status": "prioritized", "video_id": video_id}), 202
 
 # === START THREADS ===
-for _ in range(4):  # Tune this based on load and vCPUs
-    threading.Thread(target=downloader_thread, daemon=True).start()
+# for _ in range(4):  # Tune this based on load and vCPUs
+    # threading.Thread(target=downloader_thread, daemon=True).start()
+    
+    
+threading.Thread(target=downloader_thread, daemon=True).start()
     
     
 cpu_worker = multiprocessing.Process(target=cpu_worker_loop, daemon=True)
