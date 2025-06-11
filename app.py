@@ -179,7 +179,7 @@ def check_separation_status():
 @app.route("/separate2", methods=["POST"])
 @token_required
 @usage_check
-def start_separation(current_user):
+def start_separation2(current_user):
     video_id = request.json.get("video_id")
     start = request.json.get("start",0)
     end = request.json.get("end",9999)
