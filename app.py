@@ -255,16 +255,41 @@ def separate_full_vocals(mp3_input_path: str, separator: Separator) -> bytes:
 
             return vocal_mp3_bytes, vocal_path
 
-def separate_segment(mp3_path, start: float, end: float, separator: Separator):
-    """Extract segment using ffmpeg, then separate vocals with provided separator."""
+# def separate_segment(mp3_path, start: float, end: float, separator: Separator):
+#     """Extract segment using ffmpeg, then separate vocals with provided separator."""
+#     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_segment:
+#         ffmpeg.input(mp3_path, ss=start, to=end).output(temp_segment.name).run(quiet=True, overwrite_output=True)
+#         try:
+#             return separate_full_vocals(temp_segment.name, separator)
+#         finally:
+#             if os.path.exists(temp_segment.name):
+#                 os.remove(temp_segment.name)
+
+
+def separate_segment(mp3_input, start: float, end: float, separator):
+    """Extract segment from MP3 input (path or bytes), separate vocals, return bytes and path."""
+    input_is_bytes = isinstance(mp3_input, bytes)
+
+    # Write input bytes to temp file if needed
+    if input_is_bytes:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_input_file:
+            temp_input_file.write(mp3_input)
+            temp_input_path = temp_input_file.name
+    else:
+        temp_input_path = mp3_input  # It's already a path
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_segment:
-        ffmpeg.input(mp3_path, ss=start, to=end).output(temp_segment.name).run(quiet=True, overwrite_output=True)
         try:
+            ffmpeg.input(temp_input_path, ss=start, to=end).output(temp_segment.name).run(
+                quiet=True, overwrite_output=True
+            )
             return separate_full_vocals(temp_segment.name, separator)
         finally:
             if os.path.exists(temp_segment.name):
                 os.remove(temp_segment.name)
-                
+            if input_is_bytes and os.path.exists(temp_input_path):
+                os.remove(temp_input_path)
+
 def gpu_worker_loop():
     """Process GPU separation queue with GPU-based Spleeter."""
     global gpu_separator  # use the pre-initialized GPU separator
@@ -367,32 +392,51 @@ def start_separation(current_user):
     if not video_id:
         return jsonify({"error": "Missing video_id"}), 400
     
-    vidd= video_id.encode('utf-8')
-    print(type(video_id))
-    vocal_key = f"vocals-{vidd}-{start}|{end}"
-    print("exists", vocal_key,redis_client.exists(vocal_key))
+    raw_key =f"raw-{video_id}"
+    vocal_key =f"vocal-{video_id}-{start}-{end}"
+    
     mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
     if redis_client.exists(vocal_key):
+        print(f"VOCAL KEY {vocal_key} already in REDIS")
         vocal_mp3 = redis_client.get(vocal_key)
         response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
-        if(next_chunk):
-            redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
+        # if(next_chunk):
+            
+            # redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
         # next_vocal_key = f"vocals-{video_id}-{end}|{start}"
         return response
     else:
-        if redis_client.exists(video_id):
-            print('raw files exists in redis')
-            vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
+        print(f"VOCAL KEY {vocal_key} NOT in REDIS. CHECKING LOCAL")
+        vocal_path =  os.path.join(VOCALS_DIR, f"{vocal_key}.mp3")
+        
+        if os.path.exists(vocal_path):
+            print('VOCAL FOUND IN LOCAL PATH. SETTING TO REDIS')
+            redis_client.setex(vocal_key, 1000, open(vocal_path, "rb").read())
+            vocal_mp3 = redis_client.get(vocal_key)
+            response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+            return response
         else:
-           print('raw files DOES NOT exists in redis') 
-           vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
-           redis_client.setex(vocal_key,1800,vocal_bytes)
-           response = make_response(send_file(BytesIO(vocal_bytes), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
-
+            print('VOCAL NOT FOUND IN LOCAL PATH EITHER. CHECKING STORAGE')
+            if download_b2_to_local(f"vocal/{vocal_key}.mp3", vocal_path):
+                print('FOUND IN STORAGE. SETTIING TO REDIS')
+                redis_client.setex(vocal_key, 1000, open(vocal_path, "rb").read())
+            else:
+                print('NOT FOUND IN STORAGE EITHER. SEPARATING')
+                print('RAW IS IN REDIS--',redis_client.exists(raw_key))
+                raw_bytes = redis_client.get(raw_key)
+                vocal_bytes, vocal_path = separate_segment(raw_bytes, float(start), float(end), gpu_separator)
+                redis_client.setex(vocal_key, 1000, vocal_bytes)
+                threading.Timer(5,upload_to_b2, args=(mp3_path, f"raw_mp3/{video_id}.mp3")).start()
+                
+     
+        vocal_mp3 = redis_client.get(vocal_key)
+        response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+        threading.Timer(5,upload_bytes_to_b2, args=(vocal_mp3, f"vocal/{vocal_key}.mp3")).start()
+        return response
         # if prioritize_separation:
         #     redis_client.rpush("separation_gpu_queue", f"{vidd}|{start}|{end}")
-        if(next_chunk):
-            redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
+        # if(next_chunk):
+            # redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
             
         # return jsonify(
     
