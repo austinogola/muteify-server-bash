@@ -195,6 +195,7 @@ def start_separation(current_user,):
     print(type(video_id))
     vocal_key = f"vocals-{vidd}-{start}|{end}"
     print("exists", vocal_key,redis_client.exists(vocal_key))
+    mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
     if redis_client.exists(vocal_key):
         vocal_mp3 = redis_client.get(vocal_key)
         response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
@@ -203,12 +204,17 @@ def start_separation(current_user,):
         # next_vocal_key = f"vocals-{video_id}-{end}|{start}"
         return response
     else:
-        if prioritize_separation:
-            redis_client.rpush("separation_gpu_queue", f"{vidd}|{start}|{end}")
-            if(next_chunk):
-                redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
+        vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
+        redis_client.setex(vocal_key,1800,vocal_bytes)
+        response = make_response(send_file(BytesIO(vocal_bytes), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+
+        # if prioritize_separation:
+        #     redis_client.rpush("separation_gpu_queue", f"{vidd}|{start}|{end}")
+        if(next_chunk):
+            redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
             
-        return jsonify({"status": "not_separated", "video_id": video_id}), 200 
+        # return jsonify({"status": "not_separated", "video_id": video_id}), 200 
+        return response
     
     
     
@@ -326,7 +332,7 @@ def downloader_thread():
                     # vocal_bytes_for_30_secs = cpu_separate_segment(mp3_path,0,30,cpu_separator)
 
                     # Queue CPU separation after download for full audio (0 to duration)
-                    redis_client.rpush("separation_cpu_queue", f"{video_id}|0|30")
+                    # redis_client.rpush("separation_cpu_queue", f"{video_id}|0|30")
                     upload_to_b2(mp3_path,f"raw_mp3/{video_id}.mp3",)
 
                 redis_client.srem("download_tracking", video_id)
