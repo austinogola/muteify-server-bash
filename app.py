@@ -176,10 +176,10 @@ def check_separation_status():
        return jsonify({"status": "not_separated", "video_id": video_id}), 200 
    
    
-@app.route("/separate", methods=["POST"])
+@app.route("/separate2", methods=["POST"])
 @token_required
 @usage_check
-def start_separation(current_user,):
+def start_separation(current_user):
     video_id = request.json.get("video_id")
     start = request.json.get("start",0)
     end = request.json.get("end",9999)
@@ -204,9 +204,14 @@ def start_separation(current_user,):
         # next_vocal_key = f"vocals-{video_id}-{end}|{start}"
         return response
     else:
-        vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
-        redis_client.setex(vocal_key,1800,vocal_bytes)
-        response = make_response(send_file(BytesIO(vocal_bytes), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+        if redis_client.exists(video_id):
+            print('raw files exists in redis')
+            vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
+        else:
+           print('raw files DOES NOT exists in redis') 
+           vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
+           redis_client.setex(vocal_key,1800,vocal_bytes)
+           response = make_response(send_file(BytesIO(vocal_bytes), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
 
         # if prioritize_separation:
         #     redis_client.rpush("separation_gpu_queue", f"{vidd}|{start}|{end}")
@@ -324,10 +329,12 @@ def downloader_thread():
                 if(not os.path.exists(mp3_path)):
                     if(not download_b2_to_local(f"raw_mp3/{video_id}.mp3", mp3_path)):
                         ress = major_downloader(video_id)
+                        print(ress)
 
                 if os.path.exists(mp3_path):
                     redis_client.sadd("downloaded_videos", video_id)
                     print(f"[DOWNLOADER] Download completed: {video_id}")
+                    redis_client.setex(video_id, 3600, open(mp3_path, "rb").read())
                     
                     # vocal_bytes_for_30_secs = cpu_separate_segment(mp3_path,0,30,cpu_separator)
 
@@ -335,7 +342,9 @@ def downloader_thread():
                     # redis_client.rpush("separation_cpu_queue", f"{video_id}|0|30")
                     upload_to_b2(mp3_path,f"raw_mp3/{video_id}.mp3",)
 
-                redis_client.srem("download_tracking", video_id)
+                    redis_client.srem("download_tracking", video_id)
+                else:
+                    print('NOT DOWNLOADED',video_id)
 
             except Exception as e:
                 print(f"[DOWNLOADER] Error downloading {video_id}: {e}")
@@ -343,23 +352,90 @@ def downloader_thread():
             time.sleep(1)
 
 
+@app.route("/separate", methods=["POST"])
+@token_required
+@usage_check
+def start_separation(current_user):
+    video_id = request.json.get("video_id")
+    start = request.json.get("start",0)
+    end = request.json.get("end",9999)
+    next_chunk =request.json.get("next_chunk",False)
+    prioritize_separation = request.json.get("prioritize",False)
+    
+    # vocal_key = f"vocals-{video_id}-{start}|{end}"
+    
+    if not video_id:
+        return jsonify({"error": "Missing video_id"}), 400
+    
+    vidd= video_id.encode('utf-8')
+    print(type(video_id))
+    vocal_key = f"vocals-{vidd}-{start}|{end}"
+    print("exists", vocal_key,redis_client.exists(vocal_key))
+    mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+    if redis_client.exists(vocal_key):
+        vocal_mp3 = redis_client.get(vocal_key)
+        response = make_response(send_file(BytesIO(vocal_mp3), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+        if(next_chunk):
+            redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
+        # next_vocal_key = f"vocals-{video_id}-{end}|{start}"
+        return response
+    else:
+        if redis_client.exists(video_id):
+            print('raw files exists in redis')
+            vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
+        else:
+           print('raw files DOES NOT exists in redis') 
+           vocal_bytes, vocal_path = separate_segment(mp3_path, float(start), float(end), gpu_separator)
+           redis_client.setex(vocal_key,1800,vocal_bytes)
+           response = make_response(send_file(BytesIO(vocal_bytes), mimetype='audio/mpeg', as_attachment=True, download_name=f"{video_id}_vocals.mp3"))
+
+        # if prioritize_separation:
+        #     redis_client.rpush("separation_gpu_queue", f"{vidd}|{start}|{end}")
+        if(next_chunk):
+            redis_client.lpush("separation_cpu_queue", f"{vidd}|{end}|{end+30}")
+            
+        # return jsonify(
+    
 @app.route("/download", methods=["POST"])
 def add_to_download_queue():
     video_id = request.json.get("video_id")
     if not video_id:
         return jsonify({"error": "Missing video_id"}), 400
-
-    #if video a member of downloaded_videos set
-    if redis_client.sismember("downloaded_videos", video_id):
+    
+    raw_key =f"raw-{video_id}"
+    #if raw mp3 in redis
+    if redis_client.exists(raw_key, video_id):
+        print('Raw is already in REDIS')
         return jsonify({"status": "already_downloaded", "video_id": video_id}), 200
-
-      #if video a member of download_tracking set
-    if redis_client.sismember("download_tracking", video_id):
-        return jsonify({"status": "already_queued", "video_id": video_id}), 200
-
-    redis_client.rpush("download_queue", video_id)
-    redis_client.sadd("download_tracking", video_id)
-    return jsonify({"status": "queued", "video_id": video_id}), 202
+    else:
+        print('Raw is NOT in REDIS.CHECKING FOR RAW IN STORAGE')
+        mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+        
+        #if raw mp3 in local
+        if os.path.exists(mp3_path):
+            redis_client.setex(raw_key, 1800, open(mp3_path, "rb").read())
+            return jsonify({"status": "already_downloaded", "video_id": video_id}), 200
+    
+        #if raw mp3 in global storage
+        if(download_b2_to_local(f"raw_mp3/{video_id}.mp3", mp3_path)):
+            print('Raw FOUND IN STORAGE, DOWNLOADING and setting to redis')
+            redis_client.setex(raw_key, 1800, open(mp3_path, "rb").read())
+            return jsonify({"status": "already_downloaded", "video_id": video_id}), 200
+        else:
+            print('NOT FOUND IN STORAGE EITHER. DOWNLOADING FROM API')
+            ress = major_downloader(video_id)
+            print(ress)
+            print('DONWLOAD TRIALS COMPLETE')
+            if os.path.exists(mp3_path):
+                print('RAW FILE DOWNLOADED SUCCESSFULL')
+                redis_client.setex(raw_key, 1800, open(mp3_path, "rb").read())
+                threading.Timer(5,target=upload_to_b2, args=(mp3_path, f"raw_mp3/{video_id}.mp3")).start()
+                return jsonify({"status": "already_downloaded", "video_id": video_id}), 200
+            else:
+                print('DOWNLOAD WAS NOT SUCCESSFULL')
+                return jsonify({"status": "not downloaded", "video_id": video_id}), 200
+   
+   
 
 
 @app.route("/download/status/<video_id>", methods=["GET"])
