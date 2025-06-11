@@ -429,7 +429,7 @@ def add_to_download_queue():
             if os.path.exists(mp3_path):
                 print('RAW FILE DOWNLOADED SUCCESSFULL')
                 redis_client.setex(raw_key, 1800, open(mp3_path, "rb").read())
-                threading.Timer(5,target=upload_to_b2, args=(mp3_path, f"raw_mp3/{video_id}.mp3")).start()
+                threading.Timer(5,upload_to_b2, args=(mp3_path, f"raw_mp3/{video_id}.mp3")).start()
                 return jsonify({"status": "already_downloaded", "video_id": video_id}), 200
             else:
                 print('DOWNLOAD WAS NOT SUCCESSFULL')
