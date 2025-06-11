@@ -408,7 +408,7 @@ def add_to_download_queue():
         print('Raw is already in REDIS')
         return jsonify({"status": "already_downloaded", "video_id": video_id}), 200
     else:
-        print('Raw is NOT in REDIS.CHECKING FOR RAW IN STORAGE')
+        print('Raw is NOT in REDIS.CHECKING FOR RAW IN LOCAL')
         mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
         
         #if raw mp3 in local

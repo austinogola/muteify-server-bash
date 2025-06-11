@@ -35,10 +35,13 @@ def download_b2_to_local(b2_path: str, local_path: str) -> bool:
     print(f'Downloading from {b2_path}')
     try:
         file_info, file = bucket.download_file_by_name(b2_path)
+        print(file_info)
+        print (file)
         with open(local_path, 'wb') as f:
             file.save(f)
         return True
-    except Exception:
+    except Exception as e:
+        print(e)
         return False
     
     
