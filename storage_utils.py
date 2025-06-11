@@ -34,8 +34,8 @@ def download_b2_to_local(b2_path: str, local_path: str) -> bool:
     """Try downloading a file from B2 to a local path."""
     print(f'Downloading from {b2_path}')
     try:
-        file_info, file = bucket.download_file_by_name(b2_path)
-        print(file_info)
+        file = bucket.download_file_by_name(b2_path)
+        # print(file_info.file_info)
         print (file)
         with open(local_path, 'wb') as f:
             file.save(f)
